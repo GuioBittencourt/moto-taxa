@@ -35,19 +35,17 @@ export default function LoginScreen({ onLogin }) {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }}>
 
-      {/* Logo */}
       <div style={{ marginBottom: '2rem', textAlign: 'center' }}>
         <img
           src="/logo-escudo.png"
           alt="MotoTaxa"
-          style={{ width: 160, height: 'auto', display: 'block', margin: '0 auto 1rem' }}
+          style={{ width: 160, height: 'auto', display: 'block', margin: '0 auto 1rem', mixBlendMode: 'screen' }}
         />
         <p style={{ fontSize: 12, color: 'var(--text-2)', letterSpacing: '2px', textTransform: 'uppercase' }}>
           Calcule. Rode. Ganhe mais.
         </p>
       </div>
 
-      {/* Card de login */}
       <div className="card" style={{ width: '100%', maxWidth: 380 }}>
         <div className="tabs">
           <div className={`tab ${modo === 'login' ? 'active' : ''}`} onClick={() => { setModo('login'); setErro('') }}>
