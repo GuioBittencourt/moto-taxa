@@ -23,11 +23,25 @@ export default function LoginScreen({ onLogin }) {
     e.preventDefault()
     if (!nome.trim()) { setErro('Informe seu nome'); return }
     setLoading(true); setErro('')
-    const { data, error } = await supabase.auth.signUp({ email, password: senha })
+
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password: senha,
+      options: {
+        data: {
+          nome: nome.trim(),
+          tipo
+        }
+      }
+    })
+
     if (error) { setErro(error.message); setLoading(false); return }
+
     if (data.user) {
-      await supabase.from('profiles').insert({ id: data.user.id, nome: nome.trim(), tipo, email })
-      onLogin({ id: data.user.id, nome, tipo, email })
+      // Trigger cria o perfil automaticamente
+      // Aguarda um momento para o trigger processar
+      await new Promise(r => setTimeout(r, 500))
+      onLogin({ id: data.user.id, nome: nome.trim(), tipo, email })
     }
     setLoading(false)
   }
