@@ -2,6 +2,10 @@ export async function POST(request) {
   try {
     const { imageBase64, mimeType } = await request.json()
 
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return Response.json({ ok: false, error: 'ANTHROPIC_API_KEY não configurada' }, { status: 500 })
+    }
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -21,8 +25,7 @@ export async function POST(request) {
             },
             {
               type: 'text',
-              text: `Esta é uma comanda de delivery. Extraia as informações e responda SOMENTE em JSON válido sem markdown:
-{"cliente":"nome do cliente","endereco":"endereço completo de entrega","bairro":"nome do bairro","numero_pedido":"número do pedido se visível"}`
+              text: 'Esta é uma comanda de delivery. Extraia as informações e responda SOMENTE em JSON válido sem markdown: {"cliente":"nome do cliente","endereco":"endereço completo de entrega","bairro":"nome do bairro","numero_pedido":"número do pedido se visível"}'
             }
           ]
         }]
@@ -30,11 +33,18 @@ export async function POST(request) {
     })
 
     const data = await response.json()
+
+    if (!response.ok) {
+      console.error('Anthropic error:', JSON.stringify(data))
+      return Response.json({ ok: false, error: data.error?.message || 'Erro na API Anthropic' }, { status: 500 })
+    }
+
     const text = data.content[0].text.replace(/```json|```/g, '').trim()
     const parsed = JSON.parse(text)
 
     return Response.json({ ok: true, data: parsed })
   } catch (error) {
+    console.error('ler-comanda error:', error.message)
     return Response.json({ ok: false, error: error.message }, { status: 500 })
   }
 }
