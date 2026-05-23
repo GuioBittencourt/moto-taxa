@@ -26,11 +26,25 @@ export default function BoyHome({ perfil, onLogout }) {
     setEstabelecimentos(estabs)
     if (estabs.length > 0) setEstabAtivo(estabs[0])
 
-    const hoje = new Date().toISOString().split('T')[0]
-    const { data: turno } = await supabase
-      .from('turnos').select('*')
-      .eq('boy_id', perfil.id).eq('data', hoje).eq('status', 'aberto').single()
-    if (turno) { setTurnoAtivo(turno); carregarEntregas(turno.id) }
+    // Busca qualquer turno aberto — não só hoje
+    const { data: turnos } = await supabase
+      .from('turnos')
+      .select('*')
+      .eq('boy_id', perfil.id)
+      .eq('status', 'aberto')
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    const turno = turnos?.[0] || null
+    if (turno) {
+      setTurnoAtivo(turno)
+      carregarEntregas(turno.id)
+      // Sincroniza estab ativo com o do turno aberto
+      if (estabs.length > 0) {
+        const estabDoTurno = estabs.find(e => e.id === turno.estab_id)
+        if (estabDoTurno) setEstabAtivo(estabDoTurno)
+      }
+    }
     setLoading(false)
   }
 
@@ -117,116 +131,136 @@ export default function BoyHome({ perfil, onLogout }) {
   )
 
   return (
-    <div style={{ padding: '0 1rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem 0 0.75rem' }}>
-        <div>
-          <span className="badge badge-boy">Motoboy</span>
-          <h1 style={{ marginTop: 6 }}>{perfil.nome}</h1>
-        </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <img src="/logo-escudo.png" alt="" style={{ width: 36, height: 36, objectFit: 'contain', mixBlendMode: 'screen' }} />
-          <button className="btn btn-sm btn-outline" onClick={onLogout}>Sair</button>
+    <div>
+      {/* Banner topo */}
+      <div style={{ position: 'relative', width: '100%', height: 110, overflow: 'hidden', background: '#000' }}>
+        <img
+          src="/logo-horizontal.png"
+          alt="MotoTaxa"
+          style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', opacity: 0.92 }}
+        />
+        {/* Badge e botão sair sobrepostos */}
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0,
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+          padding: '0 1rem 10px',
+          background: 'linear-gradient(transparent, rgba(0,0,0,0.7))'
+        }}>
+          <div>
+            <span className="badge badge-boy">Motoboy</span>
+            <div style={{ color: '#fff', fontWeight: 600, fontSize: 15, marginTop: 2 }}>{perfil.nome}</div>
+          </div>
+          <button className="btn btn-sm btn-outline" onClick={onLogout} style={{ marginTop: 0, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}>
+            Sair
+          </button>
         </div>
       </div>
 
-      <div className="grid2">
-        <div className="metric">
-          <div className="metric-val yellow">R${totalEntregas.toFixed(2)}</div>
-          <div className="metric-lbl">Entregas hoje</div>
-        </div>
-        <div className="metric">
-          <div className="metric-val">{entregas.length}</div>
-          <div className="metric-lbl">Corridas</div>
-        </div>
-      </div>
+      <div style={{ padding: '0 1rem' }}>
+        <div style={{ height: 12 }} />
 
-      <div className="card">
-        <h2>Turno</h2>
-        {estabelecimentos.length === 0 ? (
-          <>
-            <p className="muted" style={{ marginBottom: 12 }}>Nenhum estabelecimento cadastrado.</p>
-            <button className="btn btn-primary" onClick={() => { setEstabEditando(null); setTela('add-estab') }}>+ Cadastrar estabelecimento</button>
-          </>
-        ) : (
-          <>
-            <label>Estabelecimento</label>
-            <select value={estabAtivo?.id || ''} onChange={e => setEstabAtivo(estabelecimentos.find(x => x.id === e.target.value))}>
-              {estabelecimentos.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
-            </select>
+        <div className="grid2">
+          <div className="metric">
+            <div className="metric-val yellow">R${totalEntregas.toFixed(2)}</div>
+            <div className="metric-lbl">Entregas do turno</div>
+          </div>
+          <div className="metric">
+            <div className="metric-val">{entregas.length}</div>
+            <div className="metric-lbl">Corridas</div>
+          </div>
+        </div>
 
-            {estabAtivo && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-                <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
-                  {estabAtivo.endereco_saida}
-                  {estabAtivo.taxa_fixa_turno > 0 && (
-                    <span style={{ color: 'var(--yellow)', marginLeft: 6 }}>+R${estabAtivo.taxa_fixa_turno}/turno</span>
-                  )}
+        <div className="card">
+          <h2>Turno</h2>
+          {estabelecimentos.length === 0 ? (
+            <>
+              <p className="muted" style={{ marginBottom: 12 }}>Nenhum estabelecimento cadastrado.</p>
+              <button className="btn btn-primary" onClick={() => { setEstabEditando(null); setTela('add-estab') }}>+ Cadastrar estabelecimento</button>
+            </>
+          ) : (
+            <>
+              <label>Estabelecimento</label>
+              <select value={estabAtivo?.id || ''} onChange={e => setEstabAtivo(estabelecimentos.find(x => x.id === e.target.value))}>
+                {estabelecimentos.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+              </select>
+
+              {estabAtivo && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text-2)' }}>
+                    {estabAtivo.endereco_saida}
+                    {estabAtivo.taxa_fixa_turno > 0 && (
+                      <span style={{ color: 'var(--yellow)', marginLeft: 6 }}>+R${estabAtivo.taxa_fixa_turno}/turno</span>
+                    )}
+                  </div>
+                  <button
+                    className="btn btn-sm btn-outline"
+                    style={{ fontSize: 11, marginTop: 0 }}
+                    onClick={() => { setEstabEditando(estabAtivo); setTela('add-estab') }}
+                  >
+                    Editar
+                  </button>
                 </div>
-                <button
-                  className="btn btn-sm btn-outline"
-                  style={{ fontSize: 11, marginTop: 0 }}
-                  onClick={() => { setEstabEditando(estabAtivo); setTela('add-estab') }}
-                >
-                  Editar
-                </button>
+              )}
+
+              {!turnoAtivo ? (
+                <button className="btn btn-primary" onClick={abrirTurno} style={{ marginTop: 12 }}>Iniciar turno</button>
+              ) : (
+                <>
+                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 8 }}>
+                    Turno iniciado em {formatarData(turnoAtivo.inicio)} às {formatarHora(turnoAtivo.inicio)}
+                  </div>
+                  <div className="total-bar" style={{ marginTop: 8 }}>
+                    <div className="total-bar-lbl">Total do turno</div>
+                    <div className="total-bar-val">R${totalComFixa.toFixed(2)}</div>
+                  </div>
+                  <button className="btn btn-primary" onClick={() => setTela('nova-entrega')} style={{ marginTop: 8 }}>+ Registrar entrega</button>
+                  <button className="btn btn-outline" onClick={fecharTurno}>Fechar turno</button>
+                </>
+              )}
+              <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }} onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
+                + Outro estabelecimento
+              </button>
+            </>
+          )}
+        </div>
+
+        {entregas.length > 0 && (
+          <div className="card">
+            <h2>Entregas do turno</h2>
+            {entregas.map(e => (
+              <div className="row" key={e.id}>
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: 14 }}>{e.cliente}</div>
+                  <div className="muted">
+                    {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
+                    {e.created_at && (
+                      <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>
+                        {formatarHora(e.created_at)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 15 }}>R${e.taxa.toFixed(2)}</div>
+                  <div className="muted-sm">{e.status === 'pendente' ? 'aguardando' : 'confirmado'}</div>
+                </div>
+              </div>
+            ))}
+            <div className="divider" />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
+              <span>Subtotal entregas</span>
+              <span>R${totalEntregas.toFixed(2)}</span>
+            </div>
+            {taxaFixa > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
+                <span>Taxa fixa do turno</span>
+                <span>R${taxaFixa.toFixed(2)}</span>
               </div>
             )}
-
-            {!turnoAtivo ? (
-              <button className="btn btn-primary" onClick={abrirTurno} style={{ marginTop: 12 }}>Iniciar turno</button>
-            ) : (
-              <>
-                <div className="total-bar" style={{ marginTop: 12 }}>
-                  <div className="total-bar-lbl">Total do turno</div>
-                  <div className="total-bar-val">R${totalComFixa.toFixed(2)}</div>
-                </div>
-                <button className="btn btn-primary" onClick={() => setTela('nova-entrega')} style={{ marginTop: 8 }}>+ Registrar entrega</button>
-                <button className="btn btn-outline" onClick={fecharTurno}>Fechar turno</button>
-              </>
-            )}
-            <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }} onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
-              + Outro estabelecimento
-            </button>
-          </>
+            <button className="btn btn-outline" onClick={() => setTela('relatorio')} style={{ marginTop: 8 }}>Ver relatório</button>
+          </div>
         )}
       </div>
-
-      {entregas.length > 0 && (
-        <div className="card">
-          <h2>Entregas do turno</h2>
-          {entregas.map(e => (
-            <div className="row" key={e.id}>
-              <div>
-                <div style={{ fontWeight: 500, fontSize: 14 }}>{e.cliente}</div>
-                <div className="muted">
-                  {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
-                  {e.created_at && (
-                    <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>
-                      {formatarHora(e.created_at)}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 15 }}>R${e.taxa.toFixed(2)}</div>
-                <div className="muted-sm">{e.status === 'pendente' ? 'aguardando' : 'confirmado'}</div>
-              </div>
-            </div>
-          ))}
-          <div className="divider" />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
-            <span>Subtotal entregas</span>
-            <span>R${totalEntregas.toFixed(2)}</span>
-          </div>
-          {taxaFixa > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
-              <span>Taxa fixa do turno</span>
-              <span>R${taxaFixa.toFixed(2)}</span>
-            </div>
-          )}
-          <button className="btn btn-outline" onClick={() => setTela('relatorio')} style={{ marginTop: 8 }}>Ver relatório</button>
-        </div>
-      )}
     </div>
   )
 }
@@ -237,6 +271,24 @@ function Relatorio({ perfil, turno, estabelecimento, entregas, onVoltar, formata
   const grand = total + fixa
   const kmTotal = entregas.reduce((s, e) => s + (e.km || 0), 0)
 
+  async function compartilhar() {
+    const texto = `🏍️ MotoTaxa — Fechamento\n` +
+      `📍 ${estabelecimento?.nome}\n` +
+      `📅 ${turno?.inicio ? formatarData(turno.inicio) : new Date().toLocaleDateString('pt-BR')}\n\n` +
+      entregas.map((e, i) => `#${i+1} ${e.cliente} — ${e.km > 0 ? e.km.toFixed(1)+'km' : e.bairro_destino} — R$${e.taxa.toFixed(2)}`).join('\n') +
+      `\n\n` +
+      (fixa > 0 ? `Taxa fixa: R$${fixa.toFixed(2)}\n` : '') +
+      `Total: R$${grand.toFixed(2)}\n` +
+      `Corridas: ${entregas.length} | KM: ${kmTotal.toFixed(1)}`
+
+    if (navigator.share) {
+      await navigator.share({ title: 'MotoTaxa — Fechamento', text: texto })
+    } else {
+      await navigator.clipboard.writeText(texto)
+      alert('Relatório copiado! Cole no WhatsApp.')
+    }
+  }
+
   return (
     <div style={{ padding: '0 1rem' }}>
       <div className="header" style={{ padding: '1rem 0 0.75rem' }}>
@@ -245,16 +297,15 @@ function Relatorio({ perfil, turno, estabelecimento, entregas, onVoltar, formata
       </div>
 
       <div className="card">
-        <div style={{ textAlign: 'center', padding: '1rem 0' }}>
-          <img src="/logo-escudo.png" alt="" style={{ width: 56, height: 56, objectFit: 'contain', marginBottom: 10, mixBlendMode: 'screen' }} />
+        <div style={{ textAlign: 'center', padding: '0.5rem 0 1rem' }}>
           <div style={{ fontFamily: 'Barlow Condensed', fontSize: 18, fontWeight: 700 }}>{estabelecimento?.nome}</div>
           <div className="muted">
-            {turno?.inicio ? formatarData(turno.inicio) : new Date().toLocaleDateString('pt-BR')}
+            {turno?.inicio ? `${formatarData(turno.inicio)} às ${formatarHora(turno.inicio)}` : new Date().toLocaleDateString('pt-BR')}
           </div>
         </div>
 
-        <div className="grid2" style={{ marginTop: 8 }}>
-          <div className="metric"><div className="metric-val">{entregas.length}</div><div className="metric-lbl">Corridas</div></div>
+        <div className="grid2" style={{ marginTop: 4 }}>
+          <div class="metric"><div className="metric-val">{entregas.length}</div><div className="metric-lbl">Corridas</div></div>
           <div className="metric"><div className="metric-val">{kmTotal.toFixed(1)}</div><div className="metric-lbl">km entregues</div></div>
         </div>
 
@@ -289,8 +340,8 @@ function Relatorio({ perfil, turno, estabelecimento, entregas, onVoltar, formata
           <div className="total-bar-val">R${grand.toFixed(2)}</div>
         </div>
 
-        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => alert('PDF: em produção compartilha via WhatsApp')}>
-          Compartilhar relatório
+        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={compartilhar}>
+          Compartilhar via WhatsApp
         </button>
       </div>
     </div>
