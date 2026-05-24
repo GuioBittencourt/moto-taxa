@@ -12,18 +12,23 @@ export async function POST(request) {
     const resp = await fetch(url)
     const data = await resp.json()
 
-    console.log('Maps origem:', origem)
-    console.log('Maps destino:', destino)
-    console.log('Maps status:', data.status)
-    console.log('Maps element:', JSON.stringify(data.rows?.[0]?.elements?.[0]))
+    console.log('Maps FULL response:', JSON.stringify(data))
 
     if (data.status !== 'OK') {
       return Response.json({ ok: false, error: `Maps erro: ${data.status}` }, { status: 400 })
     }
 
-    const element = data.rows[0]?.elements[0]
-    if (element?.status !== 'OK') {
-      return Response.json({ ok: false, error: `Endereço não encontrado: ${element?.status}` }, { status: 400 })
+    const row = data.rows?.[0]
+    const element = row?.elements?.[0]
+
+    console.log('row:', JSON.stringify(row))
+    console.log('element:', JSON.stringify(element))
+
+    if (!element || element.status !== 'OK') {
+      return Response.json({ 
+        ok: false, 
+        error: `Endereço não encontrado. Status: ${element?.status}. Destino enviado: ${destino}` 
+      }, { status: 400 })
     }
 
     const distanciaKm = +(element.distance.value / 1000).toFixed(1)
