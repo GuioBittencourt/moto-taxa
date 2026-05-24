@@ -4,16 +4,16 @@ import { supabase } from '../lib/supabase'
 
 const TIPOS = {
   km: {
-    label: 'Por km — endereço completo',
-    descricao: 'Calcula pela rota real do endereço de entrega. Você define faixas de distância com valores.'
-  },
-  bairro: {
-    label: 'Por bairro',
-    descricao: 'Você cadastra um valor fixo por bairro de destino. Sem precisar informar km.'
+    label: 'Por km',
+    descricao: 'Maps calcula a distância real e aplica sua tabela de faixas.'
   },
   fixa: {
     label: 'Taxa fixa por entrega',
     descricao: 'Valor fixo igual para qualquer entrega, independente da distância.'
+  },
+  bairro: {
+    label: 'Por bairro (valor fixo por bairro)',
+    descricao: 'Para quem entrega em poucos bairros fixos. Você cadastra o valor de cada bairro manualmente.'
   },
   composta: {
     label: 'Regras livres',
@@ -26,8 +26,10 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
 
   const [nome, setNome] = useState(estabExistente?.nome || '')
   const [endSaida, setEndSaida] = useState(estabExistente?.endereco_saida || '')
+  const [cidade, setCidade] = useState(estabExistente?.cidade || '')
   const [taxaFixaTurno, setTaxaFixaTurno] = useState(estabExistente?.taxa_fixa_turno || '')
   const [tipoCalculo, setTipoCalculo] = useState(estabExistente?.tipo_calculo || 'km')
+  const [modeMedicao, setModeMedicao] = useState(estabExistente?.regras?.mode_medicao || 'rua')
   const [taxaMinima, setTaxaMinima] = useState(estabExistente?.regras?.taxa_minima || '')
   const [textoRegras, setTextoRegras] = useState('')
   const [regrasIA, setRegrasIA] = useState(null)
@@ -54,6 +56,23 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         ]
   )
 
+  function adicionarFaixa() {
+    const ultima = faixas[faixas.length - 1]
+    const novoMin = ultima ? ultima.km_max + 1 : 1
+    setFaixas([...faixas, { km_min: novoMin, km_max: novoMin + 4, tipo: 'fixo', valor: 0 }])
+  }
+
+  function removerFaixa(i) {
+    if (faixas.length <= 1) return
+    setFaixas(faixas.filter((_, j) => j !== i))
+  }
+
+  function atualizarFaixa(i, campo, valor) {
+    const n = [...faixas]
+    n[i] = { ...n[i], [campo]: campo === 'tipo' ? valor : parseFloat(valor) || 0 }
+    setFaixas(n)
+  }
+
   async function interpretarRegras() {
     if (!textoRegras.trim()) return
     setInterpretando(true); setErro('')
@@ -72,25 +91,33 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
 
   function montarRegras() {
     const taxa_minima = parseFloat(taxaMinima) || 0
-    if (tipoCalculo === 'composta' && regrasIA) return { ...regrasIA, taxa_minima }
+    if (tipoCalculo === 'composta' && regrasIA) return { ...regrasIA, taxa_minima, mode_medicao: modeMedicao }
     if (tipoCalculo === 'fixa') return {
       tipo: 'fixa', taxa_fixa_entrega: parseFloat(taxaFixaEntrega) || 0,
-      taxa_minima, faixas_km: [], bairros: [], excedente_km: null
+      taxa_minima, mode_medicao: modeMedicao, faixas_km: [], bairros: [], excedente_km: null
     }
     if (tipoCalculo === 'bairro') return {
-      tipo: 'bairro', taxa_fixa_entrega: 0, taxa_minima, faixas_km: [],
+      tipo: 'bairro', taxa_fixa_entrega: 0, taxa_minima, mode_medicao: 'bairro',
+      faixas_km: [],
       bairros: bairros.filter(b => b.nome && b.valor).map(b => ({ nome: b.nome, valor: parseFloat(b.valor) })),
       excedente_km: null
     }
-    return { tipo: 'km', taxa_fixa_entrega: 0, taxa_minima, faixas_km: faixas, bairros: [], excedente_km: null }
+    return {
+      tipo: 'km', taxa_fixa_entrega: 0, taxa_minima,
+      mode_medicao: modeMedicao,
+      faixas_km: faixas, bairros: [], excedente_km: null
+    }
   }
 
   async function salvar() {
     if (!nome.trim() || !endSaida.trim()) { setErro('Preencha nome e endereço'); return }
+    if (!cidade.trim()) { setErro('Preencha a cidade'); return }
     setSalvando(true); setErro('')
     const regras = montarRegras()
     const payload = {
-      nome: nome.trim(), endereco_saida: endSaida.trim(),
+      nome: nome.trim(),
+      endereco_saida: endSaida.trim(),
+      cidade: cidade.trim(),
       taxa_fixa_turno: parseFloat(taxaFixaTurno) || 0,
       tipo_calculo: tipoCalculo, regras
     }
@@ -121,16 +148,18 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
 
       {editando && (
         <div className="alert alert-info" style={{ marginBottom: 12 }}>
-          Editar as regras não afeta entregas já registradas — o histórico é preservado.
+          Editar as regras não afeta entregas já registradas.
         </div>
       )}
 
       <div className="card">
         <h2>Dados básicos</h2>
-        <label>Nome</label>
+        <label>Nome do estabelecimento</label>
         <input placeholder="Ex: Alameda Pizzaria" value={nome} onChange={e => setNome(e.target.value)} />
         <label>Endereço de saída</label>
-        <input placeholder="Ex: Rua João de Paula, 14 - SJC" value={endSaida} onChange={e => setEndSaida(e.target.value)} />
+        <input placeholder="Ex: Rua João de Paula, 14" value={endSaida} onChange={e => setEndSaida(e.target.value)} />
+        <label>Cidade</label>
+        <input placeholder="Ex: São José dos Campos" value={cidade} onChange={e => setCidade(e.target.value)} />
         <label>Taxa fixa de turno — R$ (opcional)</label>
         <input type="number" placeholder="Ex: 60.00" step="0.01" value={taxaFixaTurno} onChange={e => setTaxaFixaTurno(e.target.value)} />
       </div>
@@ -155,35 +184,106 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         ))}
       </div>
 
-      {(tipoCalculo === 'km' || tipoCalculo === 'composta' || tipoCalculo === 'bairro') && (
+      {/* Modo de medição — só para tipo km */}
+      {tipoCalculo === 'km' && (
+        <div className="card">
+          <h2>Como medir a distância?</h2>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div
+              onClick={() => setModeMedicao('rua')}
+              style={{
+                flex: 1, padding: '10px 14px', borderRadius: 8, cursor: 'pointer', textAlign: 'center',
+                border: `1px solid ${modeMedicao === 'rua' ? 'var(--yellow)' : 'var(--border-2)'}`,
+                background: modeMedicao === 'rua' ? 'var(--yellow-dim)' : 'var(--bg-2)'
+              }}
+            >
+              <div style={{ fontWeight: 500, fontSize: 13, color: modeMedicao === 'rua' ? 'var(--yellow)' : 'var(--text)' }}>Rua a rua</div>
+              <div className="muted-sm" style={{ marginTop: 3 }}>Endereço exato</div>
+            </div>
+            <div
+              onClick={() => setModeMedicao('bairro')}
+              style={{
+                flex: 1, padding: '10px 14px', borderRadius: 8, cursor: 'pointer', textAlign: 'center',
+                border: `1px solid ${modeMedicao === 'bairro' ? 'var(--yellow)' : 'var(--border-2)'}`,
+                background: modeMedicao === 'bairro' ? 'var(--yellow-dim)' : 'var(--bg-2)'
+              }}
+            >
+              <div style={{ fontWeight: 500, fontSize: 13, color: modeMedicao === 'bairro' ? 'var(--yellow)' : 'var(--text)' }}>Bairro a bairro</div>
+              <div className="muted-sm" style={{ marginTop: 3 }}>Centro do bairro</div>
+            </div>
+          </div>
+          <p className="muted" style={{ marginTop: 8, fontSize: 11 }}>
+            {modeMedicao === 'rua'
+              ? 'Maps calcula do endereço exato de saída até o endereço exato de entrega.'
+              : 'Maps calcula do bairro de saída até o bairro de entrega. Menos preciso, mais estável.'}
+          </p>
+        </div>
+      )}
+
+      {/* Taxa mínima */}
+      {(tipoCalculo === 'km' || tipoCalculo === 'composta') && (
         <div className="card">
           <h2>Taxa mínima por entrega (opcional)</h2>
           <p className="muted" style={{ marginBottom: 10 }}>
-            Valor mínimo garantido. Ex: R$3,00 — mesmo que o cálculo dê menos, o motoboy recebe no mínimo esse valor.
+            Mesmo que o cálculo dê menos, o motoboy recebe no mínimo esse valor.
           </p>
           <label>Taxa mínima — R$</label>
           <input type="number" placeholder="Ex: 3.00" step="0.01" value={taxaMinima} onChange={e => setTaxaMinima(e.target.value)} />
         </div>
       )}
 
+      {/* Faixas de km — editáveis */}
       {tipoCalculo === 'km' && (
         <div className="card">
-          <h2>Faixas de distância</h2>
+          <h2>Tabela de faixas</h2>
+          <p className="muted" style={{ marginBottom: 12 }}>Adicione ou remova faixas livremente.</p>
           {faixas.map((f, i) => (
-            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
-              <span style={{ fontSize: 12, color: 'var(--text-2)', width: 72, flexShrink: 0 }}>{f.km_min}–{f.km_max} km</span>
-              <span style={{ fontSize: 13, color: 'var(--text-2)' }}>R$</span>
-              <input type="number" step="0.01" value={f.valor} style={{ width: 80 }}
-                onChange={e => { const n = [...faixas]; n[i] = { ...n[i], valor: parseFloat(e.target.value) || 0 }; setFaixas(n) }} />
-              <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{f.tipo === 'por_km' ? '/km' : 'fixo'}</span>
+            <div key={i} style={{ background: 'var(--bg-2)', borderRadius: 8, padding: '10px 12px', marginBottom: 8 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div className="muted-sm" style={{ marginBottom: 4 }}>De (km)</div>
+                  <input type="number" step="0.1" value={f.km_min}
+                    onChange={e => atualizarFaixa(i, 'km_min', e.target.value)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div className="muted-sm" style={{ marginBottom: 4 }}>Até (km)</div>
+                  <input type="number" step="0.1" value={f.km_max}
+                    onChange={e => atualizarFaixa(i, 'km_max', e.target.value)} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div className="muted-sm" style={{ marginBottom: 4 }}>Valor R$</div>
+                  <input type="number" step="0.01" value={f.valor}
+                    onChange={e => atualizarFaixa(i, 'valor', e.target.value)} />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div style={{ flex: 1 }}>
+                  <select value={f.tipo} onChange={e => atualizarFaixa(i, 'tipo', e.target.value)}>
+                    <option value="fixo">Valor fixo</option>
+                    <option value="por_km">Por km</option>
+                  </select>
+                </div>
+                {faixas.length > 1 && (
+                  <button
+                    className="btn btn-sm"
+                    style={{ color: 'var(--red)', borderColor: 'var(--red)', background: 'var(--red-dim)', marginTop: 0 }}
+                    onClick={() => removerFaixa(i)}
+                  >
+                    Remover
+                  </button>
+                )}
+              </div>
             </div>
           ))}
+          <button className="btn btn-outline" onClick={adicionarFaixa}>+ Adicionar faixa</button>
         </div>
       )}
 
+      {/* Bairros */}
       {tipoCalculo === 'bairro' && (
         <div className="card">
           <h2>Tabela por bairro</h2>
+          <p className="muted" style={{ marginBottom: 10 }}>Para poucos bairros fixos com valor definido por bairro.</p>
           {bairros.map((b, i) => (
             <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
               <input placeholder="Bairro" value={b.nome} style={{ flex: 2 }}
@@ -201,6 +301,7 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         </div>
       )}
 
+      {/* Taxa fixa */}
       {tipoCalculo === 'fixa' && (
         <div className="card">
           <h2>Taxa fixa por entrega</h2>
@@ -209,6 +310,7 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         </div>
       )}
 
+      {/* Regras livres */}
       {tipoCalculo === 'composta' && (
         <div className="card">
           <h2>Descreva as regras <span className="ai-tag">IA</span></h2>
@@ -216,7 +318,7 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
             Escreva como funciona a precificação e a IA monta automaticamente.
           </p>
           <textarea
-            placeholder={'Exemplos:\n"R$5 fixo por entrega, mais R$2 se passar de 10km"\n"1-5km cobra R$1/km, 6-10km R$7 fixo"\n"Bairro Centro R$7, Vila Nair R$8"'}
+            placeholder={'Ex: "R$5 fixo por entrega, mais R$2 se passar de 10km"\n"1-5km cobra R$1/km, 6-10km R$7 fixo"'}
             value={textoRegras} onChange={e => setTextoRegras(e.target.value)}
           />
           <button className="btn btn-primary" onClick={interpretarRegras} disabled={interpretando || !textoRegras.trim()}>

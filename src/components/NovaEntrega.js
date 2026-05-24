@@ -8,6 +8,7 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
   const [cliente, setCliente] = useState('')
   const [endDestino, setEndDestino] = useState('')
   const [bairroDestino, setBairroDestino] = useState('')
+  const [cidadeDestino, setCidadeDestino] = useState('')
   const [km, setKm] = useState('')
   const [resultado, setResultado] = useState(null)
   const [lendoFoto, setLendoFoto] = useState(false)
@@ -19,59 +20,90 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
 
   const regras = estabelecimento?.regras || {}
   const tipoCalculo = estabelecimento?.tipo_calculo || 'km'
-  const usaBairro = tipoCalculo === 'bairro'
+  const modeMedicao = regras.mode_medicao || 'rua'
+  const usaBairroFixo = tipoCalculo === 'bairro'
   const bairrosCadastrados = regras.bairros || []
+  const cidadeEstab = estabelecimento?.cidade || 'São José dos Campos'
 
   async function lerFoto(file) {
-    setLendoFoto(true); setErro('')
+    setLendoFoto(true); setErro(''); setInfoMaps('')
+
     const reader = new FileReader()
     reader.onload = async (ev) => {
-      const b64 = ev.target.result.split(',')[1]
-      setFotoPreview(ev.target.result)
       try {
+        const base64Full = ev.target.result
+        const b64 = base64Full.split(',')[1]
+
+        // Determina mime type — compatível com todos os celulares
+        let mimeType = file.type
+        if (!mimeType || mimeType === 'application/octet-stream') mimeType = 'image/jpeg'
+        if (mimeType === 'image/heic' || mimeType === 'image/heif') mimeType = 'image/jpeg'
+
+        setFotoPreview(base64Full)
+
         const resp = await fetch('/api/ler-comanda', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageBase64: b64, mimeType: file.type })
+          body: JSON.stringify({ imageBase64: b64, mimeType })
         })
         const data = await resp.json()
+
         if (data.ok) {
           setCliente(data.data.cliente || '')
-          setEndDestino(data.data.endereco || '')
+          setEndDestino(data.data.endereco_completo || data.data.rua || '')
           setBairroDestino(data.data.bairro || '')
-          setInfoMaps('Endereço extraído. Clique em Calcular para obter o km pelo Maps.')
+          setCidadeDestino(data.data.cidade || cidadeEstab)
+          setInfoMaps('Comanda lida. Clique em Calcular para obter o km.')
         } else {
-          setErro('Não consegui ler a comanda. Preencha manualmente.')
+          setErro('Não consegui ler a comanda: ' + (data.error || 'tente novamente'))
         }
-      } catch {
-        setErro('Erro ao processar foto')
+      } catch (e) {
+        setErro('Erro ao processar foto: ' + e.message)
       }
+      setLendoFoto(false)
+    }
+    reader.onerror = () => {
+      setErro('Erro ao ler o arquivo de imagem')
       setLendoFoto(false)
     }
     reader.readAsDataURL(file)
   }
 
-  async function buscarKmMaps(enderecoDestino) {
+  async function buscarKmMaps() {
     setInfoMaps('Calculando distância pelo Maps...')
+
+    let origemMaps, destinoMaps
+
+    if (modeMedicao === 'bairro') {
+      // Bairro a bairro
+      const bairroOrigem = estabelecimento?.endereco_saida?.split(',')[0] || estabelecimento?.endereco_saida
+      origemMaps = `${bairroOrigem}, ${cidadeEstab}, SP, Brasil`
+      destinoMaps = `${bairroDestino || endDestino}, ${cidadeDestino || cidadeEstab}, SP, Brasil`
+    } else {
+      // Rua a rua — endereço completo
+      origemMaps = `${estabelecimento?.endereco_saida}, ${cidadeEstab}, SP, Brasil`
+      destinoMaps = endDestino.includes(cidadeDestino || cidadeEstab)
+        ? endDestino + ', SP, Brasil'
+        : `${endDestino}, ${cidadeDestino || cidadeEstab}, SP, Brasil`
+    }
+
     try {
       const resp = await fetch('/api/calcular-distancia', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          origem: estabelecimento.endereco_saida,
-          destino: enderecoDestino + ', São José dos Campos - SP'
-        })
+        body: JSON.stringify({ origem: origemMaps, destino: destinoMaps, modeMedicao })
       })
       const data = await resp.json()
+
       if (data.ok) {
         setKm(String(data.km))
-        setInfoMaps(`Maps calculou: ${data.km} km (${data.duracao})`)
+        setInfoMaps(`Maps: ${data.km} km (${data.duracao})`)
         return data.km
       } else {
-        setInfoMaps('Maps não encontrou o endereço. Informe o km manualmente.')
+        setInfoMaps('Maps não encontrou. Informe o km manualmente.')
         return 0
       }
-    } catch (e) {
+    } catch {
       setInfoMaps('Erro ao consultar Maps. Informe o km manualmente.')
       return 0
     }
@@ -81,15 +113,17 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
     setCalculando(true); setErro(''); setResultado(null)
     let distanciaKm = parseFloat(km) || 0
 
-    // Se não tem km e tem endereço, tenta o Maps
-    if (!usaBairro && endDestino && distanciaKm === 0) {
-      distanciaKm = await buscarKmMaps(endDestino)
+    if (!usaBairroFixo && distanciaKm === 0) {
+      if (!endDestino && !bairroDestino) {
+        setErro('Informe o endereço ou bairro de destino')
+        setCalculando(false); return
+      }
+      distanciaKm = await buscarKmMaps()
     }
 
-    if (distanciaKm === 0 && !usaBairro) {
-      setErro('Informe a distância em km ou verifique o endereço para calcular pelo Maps')
-      setCalculando(false)
-      return
+    if (distanciaKm === 0 && !usaBairroFixo) {
+      setErro('Informe a distância em km manualmente')
+      setCalculando(false); return
     }
 
     const r = calcularTaxa(distanciaKm, bairroDestino, regras)
@@ -102,12 +136,15 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
     setSalvando(true)
     const { error } = await supabase.from('entregas').insert({
       turno_id: turnoId, boy_id: userId, estab_id: estabelecimento.id,
-      cliente: cliente || 'Cliente', endereco_destino: endDestino,
-      bairro_destino: bairroDestino, km: resultado.km, taxa: resultado.valor,
-      descricao_calculo: resultado.descricao, tipo_calculo: tipoCalculo,
+      cliente: cliente || 'Cliente',
+      endereco_destino: endDestino,
+      bairro_destino: bairroDestino,
+      km: resultado.km, taxa: resultado.valor,
+      descricao_calculo: resultado.descricao,
+      tipo_calculo: tipoCalculo,
       status: 'pendente', origem: 'boy'
     })
-    if (error) { setErro('Erro ao salvar'); setSalvando(false); return }
+    if (error) { setErro('Erro ao salvar: ' + error.message); setSalvando(false); return }
     onConfirmado(resultado)
     setSalvando(false)
   }
@@ -123,6 +160,9 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         {estabelecimento?.nome}
         <span style={{ color: 'var(--text-3)', marginLeft: 6 }}>·</span>
         <span style={{ marginLeft: 6 }}>{estabelecimento?.endereco_saida}</span>
+        {modeMedicao === 'bairro' && (
+          <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 11 }}>· bairro a bairro</span>
+        )}
       </div>
 
       <div className="card">
@@ -144,7 +184,9 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
                 : 'Tirar foto ou selecionar imagem'}
             </div>
             <input
-              type="file" id="foto-input" accept="image/*" capture="environment"
+              type="file" id="foto-input"
+              accept="image/*,image/heic,image/heif"
+              capture="environment"
               style={{ display: 'none' }}
               onChange={e => e.target.files[0] && lerFoto(e.target.files[0])}
             />
@@ -157,7 +199,7 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         <label>Cliente (opcional)</label>
         <input placeholder="Ex: João Silva" value={cliente} onChange={e => setCliente(e.target.value)} />
 
-        {usaBairro ? (
+        {usaBairroFixo ? (
           <>
             <label>Bairro de destino</label>
             {bairrosCadastrados.length > 0 ? (
@@ -175,14 +217,24 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
           <>
             <label>Endereço de destino</label>
             <input
-              placeholder="Ex: Rua das Flores, 123"
+              placeholder={modeMedicao === 'bairro' ? 'Ex: Jardim Satélite' : 'Ex: Rua das Flores, 123'}
               value={endDestino}
               onChange={e => { setEndDestino(e.target.value); setInfoMaps(''); setKm('') }}
             />
+            {modeMedicao === 'bairro' && (
+              <>
+                <label>Bairro de destino</label>
+                <input
+                  placeholder="Ex: Jardim Satélite"
+                  value={bairroDestino}
+                  onChange={e => { setBairroDestino(e.target.value); setInfoMaps(''); setKm('') }}
+                />
+              </>
+            )}
             <label>Distância em km</label>
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <input
-                type="number" placeholder="Deixe vazio para calcular pelo Maps"
+                type="number" placeholder="Vazio = calcular pelo Maps"
                 step="0.1" value={km}
                 onChange={e => setKm(e.target.value)}
                 style={{ flex: 1 }}
@@ -197,14 +249,14 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
               </button>
             </div>
             {infoMaps && (
-              <p className="muted-sm" style={{ marginTop: 6, color: infoMaps.includes('calculou') ? 'var(--green)' : 'var(--text-2)' }}>
+              <p className="muted-sm" style={{ marginTop: 6, color: infoMaps.includes('Maps:') ? 'var(--green)' : 'var(--text-2)' }}>
                 {infoMaps}
               </p>
             )}
           </>
         )}
 
-        {usaBairro && (
+        {usaBairroFixo && (
           <button className="btn btn-primary" onClick={calcular} disabled={calculando} style={{ marginTop: 14 }}>
             {calculando ? <><span className="spinner"></span>Calculando...</> : 'Calcular taxa'}
           </button>
