@@ -3,6 +3,25 @@ import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { calcularTaxa } from '../lib/engine'
 
+function reduzirImagem(file, maxWidth, qualidade) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const canvas = document.createElement('canvas')
+      let w = img.width, h = img.height
+      if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth }
+      canvas.width = w; canvas.height = h
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0, w, h)
+      resolve(canvas.toDataURL('image/jpeg', qualidade))
+    }
+    img.onerror = reject
+    img.src = url
+  })
+}
+
 export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfirmado, onVoltar }) {
   const [modoInput, setModoInput] = useState('digitar')
   const [cliente, setCliente] = useState('')
@@ -27,46 +46,32 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
 
   async function lerFoto(file) {
     setLendoFoto(true); setErro(''); setInfoMaps('')
+    try {
+      const imagemReduzida = await reduzirImagem(file, 1200, 0.75)
+      const b64 = imagemReduzida.split(',')[1]
 
-    const reader = new FileReader()
-    reader.onload = async (ev) => {
-      try {
-        const base64Full = ev.target.result
-        const b64 = base64Full.split(',')[1]
+      setFotoPreview(imagemReduzida)
 
-        // Determina mime type — compatível com todos os celulares
-        let mimeType = file.type
-        if (!mimeType || mimeType === 'application/octet-stream') mimeType = 'image/jpeg'
-        if (mimeType === 'image/heic' || mimeType === 'image/heif') mimeType = 'image/jpeg'
+      const resp = await fetch('/api/ler-comanda', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageBase64: b64, mimeType: 'image/jpeg' })
+      })
+      const data = await resp.json()
 
-        setFotoPreview(base64Full)
-
-        const resp = await fetch('/api/ler-comanda', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageBase64: b64, mimeType })
-        })
-        const data = await resp.json()
-
-        if (data.ok) {
-          setCliente(data.data.cliente || '')
-          setEndDestino(data.data.endereco_completo || data.data.rua || '')
-          setBairroDestino(data.data.bairro || '')
-          setCidadeDestino(data.data.cidade || cidadeEstab)
-          setInfoMaps('Comanda lida. Clique em Calcular para obter o km.')
-        } else {
-          setErro('Não consegui ler a comanda: ' + (data.error || 'tente novamente'))
-        }
-      } catch (e) {
-        setErro('Erro ao processar foto: ' + e.message)
+      if (data.ok) {
+        setCliente(data.data.cliente || '')
+        setEndDestino(data.data.endereco_completo || data.data.rua || '')
+        setBairroDestino(data.data.bairro || '')
+        setCidadeDestino(data.data.cidade || cidadeEstab)
+        setInfoMaps('Comanda lida. Clique em Calcular para obter o km.')
+      } else {
+        setErro('Não consegui ler a comanda: ' + (data.error || 'tente novamente'))
       }
-      setLendoFoto(false)
+    } catch (e) {
+      setErro('Erro ao processar foto: ' + e.message)
     }
-    reader.onerror = () => {
-      setErro('Erro ao ler o arquivo de imagem')
-      setLendoFoto(false)
-    }
-    reader.readAsDataURL(file)
+    setLendoFoto(false)
   }
 
   async function buscarKmMaps() {
@@ -75,12 +80,10 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
     let origemMaps, destinoMaps
 
     if (modeMedicao === 'bairro') {
-      // Bairro a bairro
       const bairroOrigem = estabelecimento?.endereco_saida?.split(',')[0] || estabelecimento?.endereco_saida
       origemMaps = `${bairroOrigem}, ${cidadeEstab}, SP, Brasil`
       destinoMaps = `${bairroDestino || endDestino}, ${cidadeDestino || cidadeEstab}, SP, Brasil`
     } else {
-      // Rua a rua — endereço completo
       origemMaps = `${estabelecimento?.endereco_saida}, ${cidadeEstab}, SP, Brasil`
       destinoMaps = endDestino.includes(cidadeDestino || cidadeEstab)
         ? endDestino + ', SP, Brasil'
