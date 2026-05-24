@@ -14,6 +14,7 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
   const [calculando, setCalculando] = useState(false)
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro] = useState('')
+  const [infoMaps, setInfoMaps] = useState('')
   const [fotoPreview, setFotoPreview] = useState(null)
 
   const regras = estabelecimento?.regras || {}
@@ -38,32 +39,57 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
           setCliente(data.data.cliente || '')
           setEndDestino(data.data.endereco || '')
           setBairroDestino(data.data.bairro || '')
-        } else setErro('Não consegui ler a comanda. Preencha manualmente.')
-      } catch { setErro('Erro ao processar foto') }
+          setInfoMaps('Endereço extraído. Clique em Calcular para obter o km pelo Maps.')
+        } else {
+          setErro('Não consegui ler a comanda. Preencha manualmente.')
+        }
+      } catch {
+        setErro('Erro ao processar foto')
+      }
       setLendoFoto(false)
     }
     reader.readAsDataURL(file)
+  }
+
+  async function buscarKmMaps(enderecoDestino) {
+    setInfoMaps('Calculando distância pelo Maps...')
+    try {
+      const resp = await fetch('/api/calcular-distancia', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          origem: estabelecimento.endereco_saida,
+          destino: enderecoDestino + ', São José dos Campos - SP'
+        })
+      })
+      const data = await resp.json()
+      if (data.ok) {
+        setKm(String(data.km))
+        setInfoMaps(`Maps calculou: ${data.km} km (${data.duracao})`)
+        return data.km
+      } else {
+        setInfoMaps('Maps não encontrou o endereço. Informe o km manualmente.')
+        return 0
+      }
+    } catch (e) {
+      setInfoMaps('Erro ao consultar Maps. Informe o km manualmente.')
+      return 0
+    }
   }
 
   async function calcular() {
     setCalculando(true); setErro(''); setResultado(null)
     let distanciaKm = parseFloat(km) || 0
 
-    if (!usaBairro && endDestino && !km) {
-      try {
-        const resp = await fetch('/api/calcular-distancia', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ origem: estabelecimento.endereco_saida, destino: endDestino + ', São José dos Campos' })
-        })
-        const data = await resp.json()
-        if (data.ok) { distanciaKm = data.km; setKm(String(data.km)) }
-      } catch {}
+    // Se não tem km e tem endereço, tenta o Maps
+    if (!usaBairro && endDestino && distanciaKm === 0) {
+      distanciaKm = await buscarKmMaps(endDestino)
     }
 
     if (distanciaKm === 0 && !usaBairro) {
-      setErro('Informe a distância em km')
-      setCalculando(false); return
+      setErro('Informe a distância em km ou verifique o endereço para calcular pelo Maps')
+      setCalculando(false)
+      return
     }
 
     const r = calcularTaxa(distanciaKm, bairroDestino, regras)
@@ -93,7 +119,6 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         <h1>Nova entrega</h1>
       </div>
 
-      {/* Info do estabelecimento */}
       <div style={{ fontSize: 12, color: 'var(--text-2)', padding: '0 0 12px', borderBottom: '1px solid var(--border)', marginBottom: 12 }}>
         {estabelecimento?.nome}
         <span style={{ color: 'var(--text-3)', marginLeft: 6 }}>·</span>
@@ -149,11 +174,16 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         ) : (
           <>
             <label>Endereço de destino</label>
-            <input placeholder="Ex: Rua das Flores, 123" value={endDestino} onChange={e => setEndDestino(e.target.value)} />
+            <input
+              placeholder="Ex: Rua das Flores, 123"
+              value={endDestino}
+              onChange={e => { setEndDestino(e.target.value); setInfoMaps(''); setKm('') }}
+            />
             <label>Distância em km</label>
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <input
-                type="number" placeholder="Ex: 6.1" step="0.1" value={km}
+                type="number" placeholder="Deixe vazio para calcular pelo Maps"
+                step="0.1" value={km}
                 onChange={e => setKm(e.target.value)}
                 style={{ flex: 1 }}
               />
@@ -166,7 +196,11 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
                 {calculando ? <span className="spinner"></span> : 'Calcular'}
               </button>
             </div>
-            <p className="muted-sm" style={{ marginTop: 5 }}>Deixe vazio para calcular automaticamente pelo Maps</p>
+            {infoMaps && (
+              <p className="muted-sm" style={{ marginTop: 6, color: infoMaps.includes('calculou') ? 'var(--green)' : 'var(--text-2)' }}>
+                {infoMaps}
+              </p>
+            )}
           </>
         )}
 

@@ -12,15 +12,17 @@ export default function BoyHome({ perfil, onLogout }) {
   const [turnoAtivo, setTurnoAtivo] = useState(null)
   const [entregas, setEntregas] = useState([])
   const [historicoTurnos, setHistoricoTurnos] = useState([])
-  const [verHistorico, setVerHistorico] = useState(false)
   const [loading, setLoading] = useState(true)
+
+  // Para relatório do histórico
+  const [turnoRelatorio, setTurnoRelatorio] = useState(null)
+  const [entregasRelatorio, setEntregasRelatorio] = useState([])
 
   useEffect(() => { carregarDados() }, [])
 
   async function carregarDados() {
     setLoading(true)
 
-    // 1. Carrega estabelecimentos
     const { data: vinculos } = await supabase
       .from('vinculos')
       .select('estab_id, estabelecimentos(*)')
@@ -29,7 +31,6 @@ export default function BoyHome({ perfil, onLogout }) {
     const estabs = vinculos?.map(v => v.estabelecimentos) || []
     setEstabelecimentos(estabs)
 
-    // 2. Busca turno aberto — qualquer data
     const { data: turnos } = await supabase
       .from('turnos')
       .select('*')
@@ -42,12 +43,10 @@ export default function BoyHome({ perfil, onLogout }) {
 
     if (turno) {
       setTurnoAtivo(turno)
-      // Sincroniza estab ativo com o do turno
       const estabDoTurno = estabs.find(e => e.id === turno.estab_id)
       if (estabDoTurno) setEstabAtivo(estabDoTurno)
       else if (estabs.length > 0) setEstabAtivo(estabs[0])
 
-      // Carrega entregas do turno
       const { data: ents } = await supabase
         .from('entregas')
         .select('*')
@@ -58,17 +57,19 @@ export default function BoyHome({ perfil, onLogout }) {
       if (estabs.length > 0) setEstabAtivo(estabs[0])
     }
 
-    // 3. Carrega histórico de turnos fechados
+    await carregarHistorico()
+    setLoading(false)
+  }
+
+  async function carregarHistorico() {
     const { data: hist } = await supabase
       .from('turnos')
       .select('*')
       .eq('boy_id', perfil.id)
       .eq('status', 'fechado')
       .order('created_at', { ascending: false })
-      .limit(10)
+      .limit(20)
     setHistoricoTurnos(hist || [])
-
-    setLoading(false)
   }
 
   async function carregarEntregas(turnoId) {
@@ -95,9 +96,7 @@ export default function BoyHome({ perfil, onLogout }) {
     await supabase.from('turnos').update({
       status: 'fechado', fim: new Date().toISOString()
     }).eq('id', turnoAtivo.id)
-    // Atualiza histórico
-    const hist = await supabase.from('turnos').select('*').eq('boy_id', perfil.id).eq('status', 'fechado').order('created_at', { ascending: false }).limit(10)
-    setHistoricoTurnos(hist.data || [])
+    await carregarHistorico()
     setTela('relatorio')
   }
 
@@ -156,12 +155,38 @@ export default function BoyHome({ perfil, onLogout }) {
     />
   )
 
+  if (tela === 'relatorio-historico') return (
+    <Relatorio
+      perfil={perfil}
+      turno={turnoRelatorio}
+      estabelecimento={estabelecimentos.find(e => e.id === turnoRelatorio?.estab_id)}
+      entregas={entregasRelatorio}
+      onVoltar={() => setTela('historico')}
+      formatarHora={formatarHora}
+      formatarData={formatarData}
+    />
+  )
+
   if (tela === 'historico') return (
     <Historico
       perfil={perfil}
       turnos={historicoTurnos}
       estabelecimentos={estabelecimentos}
       onVoltar={() => setTela('home')}
+      onVerRelatorio={async (turno) => {
+        const { data } = await supabase
+          .from('entregas').select('*')
+          .eq('turno_id', turno.id)
+          .order('created_at', { ascending: true })
+        setTurnoRelatorio(turno)
+        setEntregasRelatorio(data || [])
+        setTela('relatorio-historico')
+      }}
+      onApagarTurno={async (turnoId) => {
+        await supabase.from('entregas').delete().eq('turno_id', turnoId)
+        await supabase.from('turnos').delete().eq('id', turnoId)
+        await carregarHistorico()
+      }}
       formatarData={formatarData}
       formatarHora={formatarHora}
     />
@@ -169,7 +194,6 @@ export default function BoyHome({ perfil, onLogout }) {
 
   return (
     <div>
-      {/* Banner topo */}
       <div style={{ position: 'relative', width: '100%', height: 110, overflow: 'hidden', background: '#000' }}>
         <img
           src="/logo-horizontal.png"
@@ -315,10 +339,13 @@ function Relatorio({ perfil, turno, estabelecimento, entregas, onVoltar, formata
   const kmTotal = entregas.reduce((s, e) => s + (e.km || 0), 0)
 
   async function compartilhar() {
-    const texto = `🏍️ MotoTaxa — Fechamento\n` +
+    const texto =
+      `🏍️ MotoTaxa — Fechamento\n` +
       `📍 ${estabelecimento?.nome}\n` +
       `📅 ${turno?.inicio ? formatarData(turno.inicio) : new Date().toLocaleDateString('pt-BR')}\n\n` +
-      entregas.map((e, i) => `#${i+1} ${e.cliente} — ${e.km > 0 ? e.km.toFixed(1)+'km' : e.bairro_destino} — R$${e.taxa.toFixed(2)}`).join('\n') +
+      entregas.map((e, i) =>
+        `#${i+1} ${e.cliente} — ${e.km > 0 ? e.km.toFixed(1)+'km' : e.bairro_destino} — R$${e.taxa.toFixed(2)}`
+      ).join('\n') +
       `\n\n` +
       (fixa > 0 ? `Taxa fixa: R$${fixa.toFixed(2)}\n` : '') +
       `Total: R$${grand.toFixed(2)}\n` +
@@ -385,89 +412,90 @@ function Relatorio({ perfil, turno, estabelecimento, entregas, onVoltar, formata
   )
 }
 
-function Historico({ perfil, turnos, estabelecimentos, onVoltar, formatarData, formatarHora }) {
-  const [turnoSel, setTurnoSel] = useState(null)
-  const [entregas, setEntregas] = useState([])
-  const [loading, setLoading] = useState(false)
+function Historico({ perfil, turnos, estabelecimentos, onVoltar, onVerRelatorio, onApagarTurno, formatarData, formatarHora }) {
+  const [confirmandoApagar, setConfirmandoApagar] = useState(null)
+  const [apagando, setApagando] = useState(false)
 
-  async function verTurno(turno) {
-    setLoading(true)
-    setTurnoSel(turno)
-    const { data } = await supabase
-      .from('entregas').select('*')
-      .eq('turno_id', turno.id)
-      .order('created_at', { ascending: true })
-    setEntregas(data || [])
-    setLoading(false)
+  async function confirmarApagar(turnoId) {
+    setApagando(true)
+    await onApagarTurno(turnoId)
+    setConfirmandoApagar(null)
+    setApagando(false)
   }
-
-  const estab = turnoSel ? estabelecimentos.find(e => e.id === turnoSel.estab_id) : null
-  const total = entregas.reduce((s, e) => s + e.taxa, 0)
-  const fixa = turnoSel?.taxa_fixa_turno || 0
-  const grand = total + fixa
 
   return (
     <div style={{ padding: '0 1rem' }}>
       <div className="header" style={{ padding: '1rem 0 0.75rem' }}>
-        <button className="back-btn" onClick={turnoSel ? () => setTurnoSel(null) : onVoltar}>←</button>
-        <h1>{turnoSel ? 'Detalhes do turno' : 'Histórico de turnos'}</h1>
+        <button className="back-btn" onClick={onVoltar}>←</button>
+        <h1>Histórico de turnos</h1>
       </div>
 
-      {!turnoSel ? (
-        turnos.map(t => {
-          const es = estabelecimentos.find(e => e.id === t.estab_id)
-          return (
-            <div className="card" key={t.id} style={{ cursor: 'pointer' }} onClick={() => verTurno(t)}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div style={{ fontWeight: 500 }}>{es?.nome || 'Estabelecimento'}</div>
-                  <div className="muted">{formatarData(t.inicio)} · {formatarHora(t.inicio)}</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ color: 'var(--yellow)', fontWeight: 600 }}>R${(t.taxa_fixa_turno || 0).toFixed(2)}</div>
-                  <div className="muted-sm">ver detalhes →</div>
-                </div>
+      {turnos.length === 0 && (
+        <p className="muted">Nenhum turno fechado ainda.</p>
+      )}
+
+      {turnos.map(t => {
+        const es = estabelecimentos.find(e => e.id === t.estab_id)
+        const esteConfirmando = confirmandoApagar === t.id
+
+        return (
+          <div className="card" key={t.id} style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <div style={{ fontWeight: 500 }}>{es?.nome || 'Estabelecimento'}</div>
+                <div className="muted">{formatarData(t.inicio)} · {formatarHora(t.inicio)}</div>
+                {t.fim && (
+                  <div className="muted-sm">até {formatarHora(t.fim)}</div>
+                )}
+              </div>
+              <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 15 }}>
+                R${(t.taxa_fixa_turno || 0).toFixed(2)}
               </div>
             </div>
-          )
-        })
-      ) : (
-        <div className="card">
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontWeight: 500 }}>{estab?.nome}</div>
-            <div className="muted">{formatarData(turnoSel.inicio)} · {formatarHora(turnoSel.inicio)}</div>
-          </div>
-          {loading ? (
-            <div style={{ textAlign: 'center', padding: '1rem' }}><span className="spinner"></span></div>
-          ) : (
-            <>
-              {entregas.map((e, i) => (
-                <div className="row" key={e.id}>
-                  <div>
-                    <span className="muted-sm">#{i+1} </span>
-                    <span style={{ fontWeight: 500 }}>{e.cliente}</span>
-                    <div className="muted">
-                      {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
-                      {e.created_at && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>{formatarHora(e.created_at)}</span>}
-                    </div>
-                  </div>
-                  <span style={{ fontWeight: 600 }}>R${e.taxa.toFixed(2)}</span>
-                </div>
-              ))}
-              <div className="divider" />
-              {fixa > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 8 }}>
-                  <span>Taxa fixa</span><span>R${fixa.toFixed(2)}</span>
-                </div>
-              )}
-              <div className="total-bar">
-                <div className="total-bar-lbl">Total</div>
-                <div className="total-bar-val">R${grand.toFixed(2)}</div>
+
+            {!esteConfirmando ? (
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                <button
+                  className="btn btn-outline"
+                  style={{ flex: 1, marginTop: 0, fontSize: 13 }}
+                  onClick={() => onVerRelatorio(t)}
+                >
+                  Ver relatório
+                </button>
+                <button
+                  className="btn btn-outline"
+                  style={{ marginTop: 0, fontSize: 13, color: 'var(--red)', borderColor: 'var(--red)', padding: '8px 14px' }}
+                  onClick={() => setConfirmandoApagar(t.id)}
+                >
+                  Apagar
+                </button>
               </div>
-            </>
-          )}
-        </div>
-      )}
+            ) : (
+              <div className="alert alert-warn" style={{ marginTop: 10 }}>
+                <div style={{ marginBottom: 8, fontWeight: 500 }}>Apagar este turno e todas as entregas?</div>
+                <div style={{ fontSize: 12, marginBottom: 10 }}>Esta ação não pode ser desfeita.</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    className="btn btn-sm"
+                    style={{ flex: 1, marginTop: 0, background: 'var(--red)', borderColor: 'var(--red)', color: '#fff' }}
+                    onClick={() => confirmarApagar(t.id)}
+                    disabled={apagando}
+                  >
+                    {apagando ? <span className="spinner"></span> : 'Sim, apagar'}
+                  </button>
+                  <button
+                    className="btn btn-sm btn-outline"
+                    style={{ flex: 1, marginTop: 0 }}
+                    onClick={() => setConfirmandoApagar(null)}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
