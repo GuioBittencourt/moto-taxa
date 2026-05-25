@@ -1,6 +1,6 @@
 export async function POST(request) {
   try {
-    const { origem, destino, modeMedicao } = await request.json()
+    const { origem, destino } = await request.json()
 
     const apiKey = process.env.GOOGLE_MAPS_API_KEY
     if (!apiKey) {
@@ -13,38 +13,35 @@ export async function POST(request) {
       const data = await resp.json()
       const element = data.rows?.[0]?.elements?.[0]
       if (data.status === 'OK' && element?.status === 'OK') {
-        return {
-          ok: true,
-          km: +(element.distance.value / 1000).toFixed(1),
-          duracao: element.duration.text
-        }
+        return { ok: true, km: +(element.distance.value / 1000).toFixed(1), duracao: element.duration.text }
       }
-      return { ok: false, status: element?.status || data.status }
+      return { ok: false }
     }
 
-    // Tentativa 1 — endereço completo como veio
-    let resultado = await consultarMaps(origem, destino)
-    if (resultado.ok) return Response.json(resultado)
-
-    // Tentativa 2 — remove o bairro do destino (mantém rua, número e cidade)
-    // Ex: "R. Foo, 35, Santana, São José dos Campos, SP" → "R. Foo, 35, São José dos Campos, SP"
+    // Extrai só rua + número do destino (remove bairro)
+    // Ex: "R. Foo, 35, Santana, São José dos Campos" → pega parte[0] + parte[1] + cidade
     const partes = destino.split(',').map(p => p.trim())
-    if (partes.length >= 3) {
-      // Tenta sem a parte do meio (bairro)
-      const semBairro = [partes[0], partes[1], ...partes.slice(-2)].join(', ')
-      resultado = await consultarMaps(origem, semBairro)
-      if (resultado.ok) return Response.json(resultado)
+    const cidade = partes[partes.length - 1] // última parte = cidade
 
-      // Tentativa 3 — só rua + número + cidade
-      const soCidade = [partes[0], partes[1], partes[partes.length - 1]].join(', ')
-      resultado = await consultarMaps(origem, soCidade)
-      if (resultado.ok) return Response.json(resultado)
+    // Tentativa 1 — rua + número + cidade (sem bairro)
+    if (partes.length >= 2) {
+      const semBairro = `${partes[0]}, ${partes[1]}, ${cidade}, SP, Brasil`
+      const r1 = await consultarMaps(origem, semBairro)
+      if (r1.ok) return Response.json(r1)
     }
 
-    return Response.json({
-      ok: false,
-      error: `Endereço não encontrado pelo Maps. Informe o km manualmente.`
-    }, { status: 400 })
+    // Tentativa 2 — endereço completo como veio
+    const r2 = await consultarMaps(origem, destino + ', SP, Brasil')
+    if (r2.ok) return Response.json(r2)
+
+    // Tentativa 3 — só rua + número + SP
+    if (partes.length >= 2) {
+      const minimo = `${partes[0]}, ${partes[1]}, SP, Brasil`
+      const r3 = await consultarMaps(origem, minimo)
+      if (r3.ok) return Response.json(r3)
+    }
+
+    return Response.json({ ok: false, error: 'Endereço não encontrado. Informe o km manualmente.' }, { status: 400 })
 
   } catch (error) {
     return Response.json({ ok: false, error: error.message }, { status: 500 })
