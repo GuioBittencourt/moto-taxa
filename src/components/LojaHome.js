@@ -3,6 +3,26 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import CadastroEstabelecimento from './CadastroEstabelecimento'
 
+function normalizar(str) {
+  return (str || '').toLowerCase().trim()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+}
+
+function nomesBatem(a, b) {
+  const na = normalizar(a).split(' ').filter(Boolean)
+  const nb = normalizar(b).split(' ').filter(Boolean)
+  const comuns = na.filter(p => nb.includes(p) && p.length > 3)
+  return comuns.length >= 2
+}
+
+function enderecosBatem(a, b) {
+  const na = normalizar(a).replace(/[^a-z0-9 ]/g, '')
+  const nb = normalizar(b).replace(/[^a-z0-9 ]/g, '')
+  const palavrasA = na.split(' ').filter(p => p.length > 3)
+  return palavrasA.filter(p => nb.includes(p)).length >= 2
+}
+
 export default function LojaHome({ perfil, onLogout }) {
   const [tela, setTela] = useState('home')
   const [estabelecimentos, setEstabelecimentos] = useState([])
@@ -50,24 +70,24 @@ export default function LojaHome({ perfil, onLogout }) {
   }
 
   async function carregarVinculos(estabId) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('vinculos')
       .select('*, profiles(nome, email)')
       .eq('estab_id', estabId)
+    console.log('VINCULOS', data, error)
     setVinculos(data || [])
   }
 
   async function gerarLinkConvite() {
     if (!estabAtivo) return
     setGerandoLink(true)
-    // Verifica se já tem convite pendente
     const { data: convExist } = await supabase
       .from('convites')
       .select('codigo')
       .eq('estab_id', estabAtivo.id)
       .eq('status', 'pendente')
       .eq('tipo', 'link')
-      .single()
+      .maybeSingle()
 
     let codigo = convExist?.codigo
     if (!codigo) {
@@ -77,7 +97,6 @@ export default function LojaHome({ perfil, onLogout }) {
         .select('codigo').single()
       codigo = novo?.codigo
     }
-
     const link = `${window.location.origin}/convite/${codigo}`
     setLinkConvite(link)
     setGerandoLink(false)
@@ -105,6 +124,40 @@ export default function LojaHome({ perfil, onLogout }) {
   async function aprovarEntrega(id) {
     await supabase.from('entregas').update({ status: 'confirmado' }).eq('id', id)
     setEntregas(prev => prev.map(e => e.id === id ? { ...e, status: 'confirmado' } : e))
+  }
+
+  async function detectarEVincularBoys(estab) {
+    // Busca todos os estabelecimentos cadastrados por boys (não pela loja)
+    const { data: todosEstabs } = await supabase
+      .from('estabelecimentos')
+      .select('*, vinculos(boy_id, aceito_boy)')
+      .neq('criado_por', perfil.id)
+
+    for (const e of (todosEstabs || [])) {
+      if (!nomesBatem(e.nome, estab.nome)) continue
+      if (!enderecosBatem(e.endereco_saida, estab.endereco_saida)) continue
+
+      // Busca o boy dono deste estab
+      const boyId = e.criado_por
+      if (!boyId) continue
+
+      // Verifica se vínculo já existe com o estab oficial
+      const { data: vincExist } = await supabase
+        .from('vinculos').select('id')
+        .eq('boy_id', boyId).eq('estab_id', estab.id)
+        .maybeSingle()
+
+      if (!vincExist) {
+        await supabase.from('vinculos').insert({
+          boy_id: boyId,
+          estab_id: estab.id,
+          ativo: true,
+          aceito_boy: true,
+          aceito_loja: false
+        })
+      }
+    }
+    await carregarVinculos(estab.id)
   }
 
   function formatarHora(ts) {
@@ -136,34 +189,7 @@ export default function LojaHome({ perfil, onLogout }) {
         }
         setEstabEditando(null)
         await carregarMovimento(e.id)
-        await carregarVinculos(e.id)
-
-        // Detecção automática: busca boys que cadastraram esta loja
-        const { data: matches } = await supabase
-          .from('vinculos')
-          .select('*, estabelecimentos(*)')
-          .eq('ativo', true)
-          .eq('aceito_loja', false)
-
-        // Para cada vínculo pendente onde o estab do boy bate com este
-        for (const m of (matches || [])) {
-          if (
-            m.estabelecimentos?.nome?.toLowerCase().trim() === e.nome.toLowerCase().trim() &&
-            m.estabelecimentos?.endereco_saida?.toLowerCase().trim() === e.endereco_saida.toLowerCase().trim()
-          ) {
-            // Cria vínculo real com a loja oficial
-            const { data: vincExist } = await supabase
-              .from('vinculos').select('id')
-              .eq('boy_id', m.boy_id).eq('estab_id', e.id).single()
-
-            if (!vincExist) {
-              await supabase.from('vinculos').insert({
-                boy_id: m.boy_id, estab_id: e.id,
-                ativo: true, aceito_boy: true, aceito_loja: false
-              })
-            }
-          }
-        }
+        await detectarEVincularBoys(e)
         setTela('home')
       }}
       onVoltar={() => { setEstabEditando(null); setTela('home') }}
@@ -195,7 +221,6 @@ export default function LojaHome({ perfil, onLogout }) {
       <div style={{ padding: '0 1rem' }}>
         <div style={{ height: 12 }} />
 
-        {/* Notificação de vínculos pendentes */}
         {vincPendentes.length > 0 && (
           <div className="alert alert-info" style={{ marginBottom: 12, cursor: 'pointer' }}
             onClick={() => setTela('vinculos')}>
@@ -238,7 +263,6 @@ export default function LojaHome({ perfil, onLogout }) {
               </div>
             </div>
 
-            {/* Motoboys ativos */}
             <div className="card">
               <h2>Motoboys ativos</h2>
               {turnosAtivos.length === 0 ? (
@@ -260,7 +284,6 @@ export default function LojaHome({ perfil, onLogout }) {
               })}
             </div>
 
-            {/* Pendentes de aprovação */}
             {pendentes.length > 0 && (
               <div className="card">
                 <h2>Pendentes de aprovação</h2>
@@ -284,7 +307,6 @@ export default function LojaHome({ perfil, onLogout }) {
               </div>
             )}
 
-            {/* Todas as entregas */}
             {entregas.length > 0 && (
               <div className="card">
                 <h2>Todas as entregas</h2>
@@ -311,7 +333,7 @@ export default function LojaHome({ perfil, onLogout }) {
               </div>
             )}
 
-            {/* Convite por link */}
+            {/* Convidar motoboy — sempre visível */}
             <div className="card">
               <h2>Convidar motoboy</h2>
               <p className="muted" style={{ marginBottom: 10 }}>
@@ -332,22 +354,29 @@ export default function LojaHome({ perfil, onLogout }) {
               )}
             </div>
 
-            {/* Gerenciar vínculos */}
-            {(vincAtivos.length > 0 || vincPendentes.length > 0) && (
-              <button className="btn btn-outline" style={{ fontSize: 12 }} onClick={() => setTela('vinculos')}>
-                Gerenciar motoboys vinculados ({vincAtivos.length} ativo{vincAtivos.length !== 1 ? 's' : ''})
-              </button>
-            )}
+            {/* Gerenciar vínculos — sempre visível */}
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2 style={{ margin: 0 }}>Motoboys vinculados</h2>
+                <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{vincAtivos.length} ativo{vincAtivos.length !== 1 ? 's' : ''}</span>
+              </div>
+              {vincAtivos.length === 0 && vincPendentes.length === 0 ? (
+                <p className="muted" style={{ marginTop: 8 }}>Nenhum motoboy vinculado ainda.</p>
+              ) : (
+                <button className="btn btn-outline" style={{ marginTop: 8, fontSize: 13 }} onClick={() => setTela('vinculos')}>
+                  Gerenciar vínculos
+                </button>
+              )}
+            </div>
 
-            <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-              <button className="btn btn-outline" style={{ flex: 1, fontSize: 12 }}
+            <div style={{ marginTop: 4 }}>
+              <button className="btn btn-outline" style={{ width: '100%', fontSize: 12 }}
                 onClick={() => { setEstabEditando(estabAtivo); setTela('add-estab') }}>
                 Editar estabelecimento
               </button>
-              <button className="btn btn-outline" style={{ flex: 1, fontSize: 12 }}
-                onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
-                + Outro
-              </button>
+              <p className="muted-sm" style={{ textAlign: 'center', marginTop: 8 }}>
+                Para gerenciar outro estabelecimento, crie uma nova conta.
+              </p>
             </div>
           </>
         )}
