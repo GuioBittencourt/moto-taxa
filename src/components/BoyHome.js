@@ -148,16 +148,23 @@ export default function BoyHome({ perfil, onLogout }) {
   if (estabAtivo?.id === estabId) setEstabAtivo(null)
   setConfirmandoApagarEstab(null)
 
-  // Apaga no banco
-  const { data: turnos } = await supabase.from('turnos').select('id')
+  // Apaga na ordem correta respeitando foreign keys
+  // 1. Entregas dos turnos
+  const { data: turnosDoEstab } = await supabase.from('turnos').select('id')
     .eq('estab_id', estabId).eq('boy_id', perfil.id)
-  for (const t of (turnos || [])) {
+  for (const t of (turnosDoEstab || [])) {
     await supabase.from('entregas').delete().eq('turno_id', t.id)
   }
+  // 2. Turnos
   await supabase.from('turnos').delete().eq('estab_id', estabId).eq('boy_id', perfil.id)
+  // 3. Vínculos
+  await supabase.from('vinculos').delete().eq('estab_id', estabId).eq('boy_id', perfil.id)
+  // 4. Convites
+  await supabase.from('convites').delete().eq('estab_id', estabId)
+  // 5. Estabelecimento
   await supabase.from('estabelecimentos').delete().eq('id', estabId).eq('criado_por', perfil.id)
 
-  // Recarrega sem detecção (evita delay)
+  // Recarrega lista
   const { data: estabs } = await supabase
     .from('estabelecimentos').select('*').eq('criado_por', perfil.id)
   setMeusEstabs(estabs || [])
