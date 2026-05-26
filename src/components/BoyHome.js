@@ -143,16 +143,26 @@ export default function BoyHome({ perfil, onLogout }) {
   }
 
   async function apagarEstab(estabId) {
-    // Apaga entregas dos turnos deste estab
-    const { data: turnos } = await supabase.from('turnos').select('id').eq('estab_id', estabId).eq('boy_id', perfil.id)
-    for (const t of (turnos || [])) {
-      await supabase.from('entregas').delete().eq('turno_id', t.id)
-    }
-    await supabase.from('turnos').delete().eq('estab_id', estabId).eq('boy_id', perfil.id)
-    await supabase.from('estabelecimentos').delete().eq('id', estabId).eq('criado_por', perfil.id)
-    setConfirmandoApagarEstab(null)
-    await carregarDados()
+  // Atualiza estado local imediatamente
+  setMeusEstabs(prev => prev.filter(e => e.id !== estabId))
+  if (estabAtivo?.id === estabId) setEstabAtivo(null)
+  setConfirmandoApagarEstab(null)
+
+  // Apaga no banco
+  const { data: turnos } = await supabase.from('turnos').select('id')
+    .eq('estab_id', estabId).eq('boy_id', perfil.id)
+  for (const t of (turnos || [])) {
+    await supabase.from('entregas').delete().eq('turno_id', t.id)
   }
+  await supabase.from('turnos').delete().eq('estab_id', estabId).eq('boy_id', perfil.id)
+  await supabase.from('estabelecimentos').delete().eq('id', estabId).eq('criado_por', perfil.id)
+
+  // Recarrega sem detecção (evita delay)
+  const { data: estabs } = await supabase
+    .from('estabelecimentos').select('*').eq('criado_por', perfil.id)
+  setMeusEstabs(estabs || [])
+  if ((estabs || []).length > 0) setEstabAtivo(estabs[0])
+}
 
   async function aceitarVinculo(vincId) {
     await supabase.from('vinculos').update({ aceito_boy: true }).eq('id', vincId)
