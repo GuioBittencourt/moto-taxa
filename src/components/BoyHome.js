@@ -25,13 +25,13 @@ function enderecosBatem(a, b) {
 
 export default function BoyHome({ perfil, onLogout }) {
   const [tela, setTela] = useState('home')
-  const [estabelecimentos, setEstabelecimentos] = useState([])
+  const [meusEstabs, setMeusEstabs] = useState([]) // estabs criados pelo boy
   const [estabAtivo, setEstabAtivo] = useState(null)
   const [estabEditando, setEstabEditando] = useState(null)
   const [turnoAtivo, setTurnoAtivo] = useState(null)
   const [entregas, setEntregas] = useState([])
   const [historicoTurnos, setHistoricoTurnos] = useState([])
-  const [vinculos, setVinculos] = useState([])
+  const [vinculos, setVinculos] = useState([]) // vínculos com lojas reais
   const [loading, setLoading] = useState(true)
   const [turnoRelatorio, setTurnoRelatorio] = useState(null)
   const [entregasRelatorio, setEntregasRelatorio] = useState([])
@@ -41,34 +41,37 @@ export default function BoyHome({ perfil, onLogout }) {
   async function carregarDados() {
     setLoading(true)
 
+    // Estabs próprios do boy (para seus registros)
+    const { data: estabs } = await supabase
+      .from('estabelecimentos').select('*')
+      .eq('criado_por', perfil.id)
+    setMeusEstabs(estabs || [])
+
+    // Vínculos com lojas reais (conta de estabelecimento)
     const { data: vincs } = await supabase
-      .from('vinculos')
-      .select('*, estabelecimentos(*)')
-      .eq('boy_id', perfil.id)
-      .eq('ativo', true)
+      .from('vinculos').select('*, estabelecimentos(*)')
+      .eq('boy_id', perfil.id).eq('ativo', true)
     setVinculos(vincs || [])
 
-    const ativos = (vincs || []).filter(v => v.aceito_boy && v.aceito_loja)
-    const estabs = ativos.map(v => v.estabelecimentos).filter(Boolean)
-    setEstabelecimentos(estabs)
-
+    // Turno aberto
     const { data: turnos } = await supabase
-      .from('turnos').select('*')
-      .eq('boy_id', perfil.id).eq('status', 'aberto')
+      .from('turnos').select('*').eq('boy_id', perfil.id).eq('status', 'aberto')
       .order('created_at', { ascending: false }).limit(1)
-
     const turno = turnos?.[0] || null
+
     if (turno) {
       setTurnoAtivo(turno)
-      const estabDoTurno = estabs.find(e => e.id === turno.estab_id)
+      // Procura o estab do turno nos próprios
+      const estabDoTurno = (estabs || []).find(e => e.id === turno.estab_id)
       if (estabDoTurno) setEstabAtivo(estabDoTurno)
-      else if (estabs.length > 0) setEstabAtivo(estabs[0])
+      else if ((estabs || []).length > 0) setEstabAtivo((estabs || [])[0])
+
       const { data: ents } = await supabase
         .from('entregas').select('*').eq('turno_id', turno.id)
         .order('created_at', { ascending: false })
       setEntregas(ents || [])
     } else {
-      if (estabs.length > 0) setEstabAtivo(estabs[0])
+      if ((estabs || []).length > 0) setEstabAtivo((estabs || [])[0])
     }
 
     await carregarHistorico()
@@ -125,31 +128,34 @@ export default function BoyHome({ perfil, onLogout }) {
   }
 
   async function aoSalvarEstab(e) {
-    // Só detecta match se não está editando
     if (!estabEditando) {
+      // Detecta se existe loja real com conta no sistema com nome+endereço parecido
+      // Busca apenas perfis do tipo 'estabelecimento'
       const { data: lojas } = await supabase
-        .from('estabelecimentos')
-        .select('id, nome, endereco_saida, criado_por')
+        .from('estabelecimentos').select('id, nome, endereco_saida, criado_por')
         .neq('criado_por', perfil.id)
 
+      // Filtra só lojas cujo criador é do tipo 'estabelecimento'
+      const { data: perfisLoja } = await supabase
+        .from('profiles').select('id').eq('tipo', 'estabelecimento')
+      const idsLoja = (perfisLoja || []).map(p => p.id)
+
       for (const loja of (lojas || [])) {
+        if (!idsLoja.includes(loja.criado_por)) continue // ignora estabs criados por boys
         if (!nomesBatem(loja.nome, e.nome)) continue
         if (!enderecosBatem(loja.endereco_saida, e.endereco_saida)) continue
 
-        // Verifica se já existe vínculo com essa loja oficial
+        // Verifica se já existe solicitação
         const { data: vincExist } = await supabase
           .from('vinculos').select('id')
           .eq('boy_id', perfil.id).eq('estab_id', loja.id)
           .maybeSingle()
 
         if (!vincExist) {
-          // Cria vínculo pendente — aguarda aprovação da loja
+          // Cria solicitação — ambos precisam aceitar
           await supabase.from('vinculos').insert({
-            boy_id: perfil.id,
-            estab_id: loja.id,
-            ativo: true,
-            aceito_boy: true,
-            aceito_loja: false
+            boy_id: perfil.id, estab_id: loja.id,
+            ativo: true, aceito_boy: true, aceito_loja: false
           })
         }
       }
@@ -178,8 +184,7 @@ export default function BoyHome({ perfil, onLogout }) {
 
   if (tela === 'add-estab') return (
     <CadastroEstabelecimento
-      userId={perfil.id}
-      estabExistente={estabEditando}
+      userId={perfil.id} estabExistente={estabEditando}
       onSalvo={aoSalvarEstab}
       onVoltar={() => { setEstabEditando(null); setTela('home') }}
     />
@@ -187,35 +192,28 @@ export default function BoyHome({ perfil, onLogout }) {
 
   if (tela === 'nova-entrega') return (
     <NovaEntrega
-      userId={perfil.id}
-      estabelecimento={estabAtivo}
-      turnoId={turnoAtivo?.id}
+      userId={perfil.id} estabelecimento={estabAtivo} turnoId={turnoAtivo?.id}
       onConfirmado={() => { carregarEntregas(turnoAtivo.id); setTela('home') }}
       onVoltar={() => setTela('home')}
     />
   )
 
   if (tela === 'relatorio') return (
-    <Relatorio
-      perfil={perfil} turno={turnoAtivo} estabelecimento={estabAtivo} entregas={entregas}
+    <Relatorio perfil={perfil} turno={turnoAtivo} estabelecimento={estabAtivo} entregas={entregas}
       onVoltar={() => { setTurnoAtivo(null); setEntregas([]); setTela('home') }}
-      formatarHora={formatarHora} formatarData={formatarData}
-    />
+      formatarHora={formatarHora} formatarData={formatarData} />
   )
 
   if (tela === 'relatorio-historico') return (
-    <Relatorio
-      perfil={perfil} turno={turnoRelatorio}
-      estabelecimento={estabelecimentos.find(e => e.id === turnoRelatorio?.estab_id)}
+    <Relatorio perfil={perfil} turno={turnoRelatorio}
+      estabelecimento={meusEstabs.find(e => e.id === turnoRelatorio?.estab_id)}
       entregas={entregasRelatorio}
       onVoltar={() => setTela('historico')}
-      formatarHora={formatarHora} formatarData={formatarData}
-    />
+      formatarHora={formatarHora} formatarData={formatarData} />
   )
 
   if (tela === 'historico') return (
-    <Historico
-      perfil={perfil} turnos={historicoTurnos} estabelecimentos={estabelecimentos}
+    <Historico perfil={perfil} turnos={historicoTurnos} estabelecimentos={meusEstabs}
       onVoltar={() => setTela('home')}
       onVerRelatorio={async (turno) => {
         const { data } = await supabase.from('entregas').select('*')
@@ -228,16 +226,14 @@ export default function BoyHome({ perfil, onLogout }) {
         await supabase.from('turnos').delete().eq('id', turnoId)
         await carregarHistorico()
       }}
-      formatarData={formatarData} formatarHora={formatarHora}
-    />
+      formatarData={formatarData} formatarHora={formatarHora} />
   )
 
   if (tela === 'vinculos') return (
     <GerenciarVinculos
       vincAtivos={vincAtivos} vincPendentes={vincPendentes}
       onAceitar={aceitarVinculo} onRecusar={recusarVinculo} onEncerrar={encerrarVinculo}
-      onVoltar={() => setTela('home')}
-    />
+      onVoltar={() => setTela('home')} />
   )
 
   return (
@@ -248,17 +244,14 @@ export default function BoyHome({ perfil, onLogout }) {
         <div style={{
           position: 'absolute', bottom: 0, left: 0, right: 0,
           display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
-          padding: '0 1rem 10px',
-          background: 'linear-gradient(transparent, rgba(0,0,0,0.75))'
+          padding: '0 1rem 10px', background: 'linear-gradient(transparent, rgba(0,0,0,0.75))'
         }}>
           <div>
             <span className="badge badge-boy">Motoboy</span>
             <div style={{ color: '#fff', fontWeight: 600, fontSize: 15, marginTop: 2 }}>{perfil.nome}</div>
           </div>
           <button className="btn btn-sm btn-outline" onClick={onLogout}
-            style={{ marginTop: 0, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}>
-            Sair
-          </button>
+            style={{ marginTop: 0, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}>Sair</button>
         </div>
       </div>
 
@@ -286,7 +279,7 @@ export default function BoyHome({ perfil, onLogout }) {
 
         <div className="card">
           <h2>Turno</h2>
-          {estabelecimentos.length === 0 ? (
+          {meusEstabs.length === 0 ? (
             <>
               <p className="muted" style={{ marginBottom: 12 }}>Nenhum estabelecimento cadastrado.</p>
               <button className="btn btn-primary" onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
@@ -297,8 +290,8 @@ export default function BoyHome({ perfil, onLogout }) {
             <>
               <label>Estabelecimento</label>
               <select value={estabAtivo?.id || ''}
-                onChange={e => setEstabAtivo(estabelecimentos.find(x => x.id === e.target.value))}>
-                {estabelecimentos.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+                onChange={e => setEstabAtivo(meusEstabs.find(x => x.id === e.target.value))}>
+                {meusEstabs.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
               </select>
 
               {estabAtivo && (
@@ -310,9 +303,7 @@ export default function BoyHome({ perfil, onLogout }) {
                     )}
                   </div>
                   <button className="btn btn-sm btn-outline" style={{ fontSize: 11, marginTop: 0 }}
-                    onClick={() => { setEstabEditando(estabAtivo); setTela('add-estab') }}>
-                    Editar
-                  </button>
+                    onClick={() => { setEstabEditando(estabAtivo); setTela('add-estab') }}>Editar</button>
                 </div>
               )}
 
@@ -321,9 +312,7 @@ export default function BoyHome({ perfil, onLogout }) {
                   <button className="btn btn-primary" onClick={abrirTurno} style={{ marginTop: 12 }}>Iniciar turno</button>
                   {historicoTurnos.length > 0 && (
                     <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
-                      onClick={() => setTela('historico')}>
-                      Ver histórico de turnos
-                    </button>
+                      onClick={() => setTela('historico')}>Ver histórico de turnos</button>
                   )}
                 </>
               ) : (
@@ -364,11 +353,7 @@ export default function BoyHome({ perfil, onLogout }) {
                   <div style={{ fontWeight: 500, fontSize: 14 }}>{e.cliente}</div>
                   <div className="muted">
                     {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
-                    {e.created_at && (
-                      <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>
-                        {formatarHora(e.created_at)}
-                      </span>
-                    )}
+                    {e.created_at && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>{formatarHora(e.created_at)}</span>}
                   </div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
@@ -386,9 +371,7 @@ export default function BoyHome({ perfil, onLogout }) {
                 <span>Taxa fixa do turno</span><span>R${taxaFixa.toFixed(2)}</span>
               </div>
             )}
-            <button className="btn btn-outline" onClick={() => setTela('relatorio')} style={{ marginTop: 8 }}>
-              Ver relatório
-            </button>
+            <button className="btn btn-outline" onClick={() => setTela('relatorio')} style={{ marginTop: 8 }}>Ver relatório</button>
           </div>
         )}
       </div>
@@ -410,12 +393,10 @@ function GerenciarVinculos({ vincAtivos, vincPendentes, onAceitar, onRecusar, on
         <div className="card">
           <h2>Solicitações pendentes</h2>
           {vincPendentes.map(v => (
-            <div className="row" key={v.id} style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
-              <div>
-                <div style={{ fontWeight: 500 }}>{v.estabelecimentos?.nome}</div>
-                <div className="muted">{v.estabelecimentos?.endereco_saida} · {v.estabelecimentos?.cidade}</div>
-              </div>
-              <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+            <div key={v.id}>
+              <div style={{ fontWeight: 500 }}>{v.estabelecimentos?.nome}</div>
+              <div className="muted" style={{ marginBottom: 8 }}>{v.estabelecimentos?.endereco_saida} · {v.estabelecimentos?.cidade}</div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                 <button className="btn btn-primary" style={{ flex: 1, marginTop: 0, fontSize: 13 }}
                   onClick={() => onAceitar(v.id)}>Aceitar</button>
                 <button className="btn btn-outline"
@@ -433,28 +414,20 @@ function GerenciarVinculos({ vincAtivos, vincPendentes, onAceitar, onRecusar, on
           <p className="muted">Nenhum vínculo ativo.</p>
         ) : vincAtivos.map(v => (
           <div key={v.id}>
-            <div className="row" style={{ marginBottom: 8 }}>
-              <div>
-                <div style={{ fontWeight: 500 }}>{v.estabelecimentos?.nome}</div>
-                <div className="muted">{v.estabelecimentos?.endereco_saida} · {v.estabelecimentos?.cidade}</div>
-              </div>
-            </div>
+            <div style={{ fontWeight: 500 }}>{v.estabelecimentos?.nome}</div>
+            <div className="muted" style={{ marginBottom: 8 }}>{v.estabelecimentos?.endereco_saida} · {v.estabelecimentos?.cidade}</div>
             {confirmandoEncerrar === v.id ? (
               <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                 <button className="btn btn-sm"
                   style={{ flex: 1, marginTop: 0, background: 'var(--red)', borderColor: 'var(--red)', color: '#fff' }}
-                  onClick={() => { onEncerrar(v.id); setConfirmandoEncerrar(null) }}>
-                  Confirmar saída
-                </button>
+                  onClick={() => { onEncerrar(v.id); setConfirmandoEncerrar(null) }}>Confirmar saída</button>
                 <button className="btn btn-sm btn-outline" style={{ flex: 1, marginTop: 0 }}
                   onClick={() => setConfirmandoEncerrar(null)}>Cancelar</button>
               </div>
             ) : (
               <button className="btn btn-outline"
                 style={{ fontSize: 12, marginTop: 0, marginBottom: 12, color: 'var(--red)', borderColor: 'var(--red)' }}
-                onClick={() => setConfirmandoEncerrar(v.id)}>
-                Encerrar vínculo
-              </button>
+                onClick={() => setConfirmandoEncerrar(v.id)}>Encerrar vínculo</button>
             )}
           </div>
         ))}
@@ -471,22 +444,12 @@ function Relatorio({ perfil, turno, estabelecimento, entregas, onVoltar, formata
 
   async function compartilhar() {
     const texto =
-      `🏍️ MotoTaxa — Fechamento\n` +
-      `📍 ${estabelecimento?.nome}\n` +
+      `🏍️ MotoTaxa — Fechamento\n📍 ${estabelecimento?.nome}\n` +
       `📅 ${turno?.inicio ? formatarData(turno.inicio) : new Date().toLocaleDateString('pt-BR')}\n\n` +
-      entregas.map((e, i) =>
-        `#${i + 1} ${e.cliente} — ${e.km > 0 ? e.km.toFixed(1) + 'km' : e.bairro_destino} — R$${e.taxa.toFixed(2)}`
-      ).join('\n') + `\n\n` +
-      (fixa > 0 ? `Taxa fixa: R$${fixa.toFixed(2)}\n` : '') +
-      `Total: R$${grand.toFixed(2)}\n` +
-      `Corridas: ${entregas.length} | KM: ${kmTotal.toFixed(1)}`
-
-    if (navigator.share) {
-      await navigator.share({ title: 'MotoTaxa — Fechamento', text: texto })
-    } else {
-      await navigator.clipboard.writeText(texto)
-      alert('Relatório copiado! Cole no WhatsApp.')
-    }
+      entregas.map((e, i) => `#${i + 1} ${e.cliente} — ${e.km > 0 ? e.km.toFixed(1) + 'km' : e.bairro_destino} — R$${e.taxa.toFixed(2)}`).join('\n') +
+      `\n\n${fixa > 0 ? `Taxa fixa: R$${fixa.toFixed(2)}\n` : ''}Total: R$${grand.toFixed(2)}\nCorridas: ${entregas.length} | KM: ${kmTotal.toFixed(1)}`
+    if (navigator.share) await navigator.share({ title: 'MotoTaxa — Fechamento', text: texto })
+    else { await navigator.clipboard.writeText(texto); alert('Relatório copiado! Cole no WhatsApp.') }
   }
 
   return (
@@ -498,9 +461,7 @@ function Relatorio({ perfil, turno, estabelecimento, entregas, onVoltar, formata
       <div className="card">
         <div style={{ textAlign: 'center', padding: '0.5rem 0 1rem' }}>
           <div style={{ fontFamily: 'Barlow Condensed', fontSize: 18, fontWeight: 700 }}>{estabelecimento?.nome}</div>
-          <div className="muted">
-            {turno?.inicio ? `${formatarData(turno.inicio)} às ${formatarHora(turno.inicio)}` : new Date().toLocaleDateString('pt-BR')}
-          </div>
+          <div className="muted">{turno?.inicio ? `${formatarData(turno.inicio)} às ${formatarHora(turno.inicio)}` : new Date().toLocaleDateString('pt-BR')}</div>
         </div>
         <div className="grid2">
           <div className="metric"><div className="metric-val">{entregas.length}</div><div className="metric-lbl">Corridas</div></div>
@@ -514,11 +475,7 @@ function Relatorio({ perfil, turno, estabelecimento, entregas, onVoltar, formata
               <span style={{ fontWeight: 500 }}>{e.cliente}</span>
               <div className="muted">
                 {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
-                {e.created_at && (
-                  <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>
-                    {formatarHora(e.created_at)}
-                  </span>
-                )}
+                {e.created_at && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>{formatarHora(e.created_at)}</span>}
               </div>
             </div>
             <span style={{ fontWeight: 600 }}>R${e.taxa.toFixed(2)}</span>
@@ -534,9 +491,7 @@ function Relatorio({ perfil, turno, estabelecimento, entregas, onVoltar, formata
           <div className="total-bar-lbl">Total geral</div>
           <div className="total-bar-val">R${grand.toFixed(2)}</div>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={compartilhar}>
-          Compartilhar via WhatsApp
-        </button>
+        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={compartilhar}>Compartilhar via WhatsApp</button>
       </div>
     </div>
   )
@@ -571,9 +526,7 @@ function Historico({ perfil, turnos, estabelecimentos, onVoltar, onVerRelatorio,
                 <div className="muted">{formatarData(t.inicio)} · {formatarHora(t.inicio)}</div>
                 {t.fim && <div className="muted-sm">até {formatarHora(t.fim)}</div>}
               </div>
-              <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 15 }}>
-                R${(t.taxa_fixa_turno || 0).toFixed(2)}
-              </div>
+              <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 15 }}>R${(t.taxa_fixa_turno || 0).toFixed(2)}</div>
             </div>
             {!esteConfirmando ? (
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
