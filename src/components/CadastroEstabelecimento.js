@@ -113,7 +113,6 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
   async function salvar() {
     if (!nome.trim() || !endSaida.trim()) { setErro('Preencha nome e endereço'); return }
     if (!cidade.trim()) { setErro('Preencha a cidade'); return }
-    // Valida bairro de saída quando modo bairro a bairro
     if (modeMedicao === 'bairro' && !bairroSaida.trim()) {
       setErro('Preencha o bairro de saída para o modo bairro a bairro'); return
     }
@@ -139,7 +138,14 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         .from('estabelecimentos').insert({ ...payload, criado_por: userId })
         .select().single()
       if (error) { setErro('Erro ao salvar: ' + error.message); setSalvando(false); return }
-      await supabase.from('vinculos').insert({ boy_id: userId, estab_id: data.id })
+      // Vínculo próprio — aceito dos dois lados automaticamente (boy usa para si mesmo)
+      await supabase.from('vinculos').insert({
+        boy_id: userId,
+        estab_id: data.id,
+        ativo: true,
+        aceito_boy: true,
+        aceito_loja: true
+      })
       onSalvo(data)
     }
     setSalvando(false)
