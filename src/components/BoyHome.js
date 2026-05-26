@@ -12,9 +12,8 @@ export default function BoyHome({ perfil, onLogout }) {
   const [turnoAtivo, setTurnoAtivo] = useState(null)
   const [entregas, setEntregas] = useState([])
   const [historicoTurnos, setHistoricoTurnos] = useState([])
+  const [vinculos, setVinculos] = useState([])
   const [loading, setLoading] = useState(true)
-
-  // Para relatório do histórico
   const [turnoRelatorio, setTurnoRelatorio] = useState(null)
   const [entregasRelatorio, setEntregasRelatorio] = useState([])
 
@@ -23,12 +22,15 @@ export default function BoyHome({ perfil, onLogout }) {
   async function carregarDados() {
     setLoading(true)
 
-    const { data: vinculos } = await supabase
+    // Busca vínculos ativos e pendentes
+    const { data: vincs } = await supabase
       .from('vinculos')
-      .select('estab_id, estabelecimentos(*)')
+      .select('*, estabelecimentos(*)')
       .eq('boy_id', perfil.id)
-      .eq('ativo', true)
-    const estabs = vinculos?.map(v => v.estabelecimentos) || []
+    setVinculos(vincs || [])
+
+    const ativos = (vincs || []).filter(v => v.ativo && v.aceito_boy && v.aceito_loja)
+    const estabs = ativos.map(v => v.estabelecimentos)
     setEstabelecimentos(estabs)
 
     const { data: turnos } = await supabase
@@ -48,8 +50,7 @@ export default function BoyHome({ perfil, onLogout }) {
       else if (estabs.length > 0) setEstabAtivo(estabs[0])
 
       const { data: ents } = await supabase
-        .from('entregas')
-        .select('*')
+        .from('entregas').select('*')
         .eq('turno_id', turno.id)
         .order('created_at', { ascending: false })
       setEntregas(ents || [])
@@ -63,8 +64,7 @@ export default function BoyHome({ perfil, onLogout }) {
 
   async function carregarHistorico() {
     const { data: hist } = await supabase
-      .from('turnos')
-      .select('*')
+      .from('turnos').select('*')
       .eq('boy_id', perfil.id)
       .eq('status', 'fechado')
       .order('created_at', { ascending: false })
@@ -100,6 +100,67 @@ export default function BoyHome({ perfil, onLogout }) {
     setTela('relatorio')
   }
 
+  async function aceitarVinculo(vincId) {
+    await supabase.from('vinculos').update({ aceito_boy: true }).eq('id', vincId)
+    await carregarDados()
+  }
+
+  async function recusarVinculo(vincId) {
+    await supabase.from('vinculos').update({ ativo: false, aceito_boy: false }).eq('id', vincId)
+    await carregarDados()
+  }
+
+  async function encerrarVinculo(vincId) {
+    await supabase.from('vinculos').update({ ativo: false }).eq('id', vincId)
+    await carregarDados()
+  }
+
+  // Ao cadastrar estab, verifica match automático com lojas já cadastradas
+  async function aoSalvarEstab(e) {
+    // Busca loja cadastrada com nome+endereço parecido
+    const { data: matches } = await supabase
+      .from('estabelecimentos')
+      .select('*')
+      .ilike('nome', `%${e.nome.split(' ')[0]}%`)
+      .neq('criado_por', perfil.id)
+
+    const match = matches?.find(m =>
+      m.nome.toLowerCase().trim() === e.nome.toLowerCase().trim() &&
+      m.endereco_saida.toLowerCase().trim() === e.endereco_saida.toLowerCase().trim()
+    )
+
+    if (match) {
+      // Verifica se vínculo já existe
+      const { data: vincExist } = await supabase
+        .from('vinculos')
+        .select('id')
+        .eq('boy_id', perfil.id)
+        .eq('estab_id', match.id)
+        .single()
+
+      if (!vincExist) {
+        await supabase.from('vinculos').insert({
+          boy_id: perfil.id,
+          estab_id: match.id,
+          ativo: true,
+          aceito_boy: true,
+          aceito_loja: false
+        })
+      }
+    }
+
+    if (estabEditando) {
+      setEstabelecimentos(prev => prev.map(x => x.id === e.id ? e : x))
+      setEstabAtivo(e)
+    } else {
+      setEstabelecimentos(prev => [...prev, e])
+      setEstabAtivo(e)
+    }
+    setEstabEditando(null)
+    setTela('home')
+    await carregarDados()
+  }
+
   function formatarHora(ts) {
     if (!ts) return ''
     return new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
@@ -114,21 +175,14 @@ export default function BoyHome({ perfil, onLogout }) {
   const taxaFixa = turnoAtivo?.taxa_fixa_turno || estabAtivo?.taxa_fixa_turno || 0
   const totalComFixa = totalEntregas + taxaFixa
 
+  const vincPendentes = vinculos.filter(v => v.ativo && v.aceito_loja && !v.aceito_boy)
+  const vincAtivos = vinculos.filter(v => v.ativo && v.aceito_boy && v.aceito_loja)
+
   if (tela === 'add-estab') return (
     <CadastroEstabelecimento
       userId={perfil.id}
       estabExistente={estabEditando}
-      onSalvo={(e) => {
-        if (estabEditando) {
-          setEstabelecimentos(prev => prev.map(x => x.id === e.id ? e : x))
-          setEstabAtivo(e)
-        } else {
-          setEstabelecimentos(prev => [...prev, e])
-          setEstabAtivo(e)
-        }
-        setEstabEditando(null)
-        setTela('home')
-      }}
+      onSalvo={aoSalvarEstab}
       onVoltar={() => { setEstabEditando(null); setTela('home') }}
     />
   )
@@ -192,14 +246,22 @@ export default function BoyHome({ perfil, onLogout }) {
     />
   )
 
+  if (tela === 'vinculos') return (
+    <GerenciarVinculos
+      vincAtivos={vincAtivos}
+      vincPendentes={vincPendentes}
+      onAceitar={aceitarVinculo}
+      onRecusar={recusarVinculo}
+      onEncerrar={encerrarVinculo}
+      onVoltar={() => setTela('home')}
+    />
+  )
+
   return (
     <div>
       <div style={{ position: 'relative', width: '100%', height: 110, overflow: 'hidden', background: '#000' }}>
-        <img
-          src="/logo-horizontal.png"
-          alt="MotoTaxa"
-          style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', opacity: 0.92 }}
-        />
+        <img src="/logo-horizontal.png" alt="MotoTaxa"
+          style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', opacity: 0.92 }} />
         <div style={{
           position: 'absolute', bottom: 0, left: 0, right: 0,
           display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
@@ -210,7 +272,8 @@ export default function BoyHome({ perfil, onLogout }) {
             <span className="badge badge-boy">Motoboy</span>
             <div style={{ color: '#fff', fontWeight: 600, fontSize: 15, marginTop: 2 }}>{perfil.nome}</div>
           </div>
-          <button className="btn btn-sm btn-outline" onClick={onLogout} style={{ marginTop: 0, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}>
+          <button className="btn btn-sm btn-outline" onClick={onLogout}
+            style={{ marginTop: 0, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}>
             Sair
           </button>
         </div>
@@ -218,6 +281,14 @@ export default function BoyHome({ perfil, onLogout }) {
 
       <div style={{ padding: '0 1rem' }}>
         <div style={{ height: 12 }} />
+
+        {/* Notificação de vínculos pendentes */}
+        {vincPendentes.length > 0 && (
+          <div className="alert alert-info" style={{ marginBottom: 12, cursor: 'pointer' }} onClick={() => setTela('vinculos')}>
+            <strong>🔗 {vincPendentes.length} solicitação{vincPendentes.length > 1 ? 'ões' : ''} de vínculo</strong>
+            <div style={{ fontSize: 12, marginTop: 2 }}>Toque para ver e aceitar</div>
+          </div>
+        )}
 
         <div className="grid2">
           <div className="metric">
@@ -235,7 +306,9 @@ export default function BoyHome({ perfil, onLogout }) {
           {estabelecimentos.length === 0 ? (
             <>
               <p className="muted" style={{ marginBottom: 12 }}>Nenhum estabelecimento cadastrado.</p>
-              <button className="btn btn-primary" onClick={() => { setEstabEditando(null); setTela('add-estab') }}>+ Cadastrar estabelecimento</button>
+              <button className="btn btn-primary" onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
+                + Cadastrar estabelecimento
+              </button>
             </>
           ) : (
             <>
@@ -252,11 +325,8 @@ export default function BoyHome({ perfil, onLogout }) {
                       <span style={{ color: 'var(--yellow)', marginLeft: 6 }}>+R${estabAtivo.taxa_fixa_turno}/turno</span>
                     )}
                   </div>
-                  <button
-                    className="btn btn-sm btn-outline"
-                    style={{ fontSize: 11, marginTop: 0 }}
-                    onClick={() => { setEstabEditando(estabAtivo); setTela('add-estab') }}
-                  >
+                  <button className="btn btn-sm btn-outline" style={{ fontSize: 11, marginTop: 0 }}
+                    onClick={() => { setEstabEditando(estabAtivo); setTela('add-estab') }}>
                     Editar
                   </button>
                 </div>
@@ -280,12 +350,19 @@ export default function BoyHome({ perfil, onLogout }) {
                     <div className="total-bar-lbl">Total do turno</div>
                     <div className="total-bar-val">R${totalComFixa.toFixed(2)}</div>
                   </div>
-                  <button className="btn btn-primary" onClick={() => setTela('nova-entrega')} style={{ marginTop: 8 }}>+ Registrar entrega</button>
+                  <button className="btn btn-primary" onClick={() => setTela('nova-entrega')} style={{ marginTop: 8 }}>
+                    + Registrar entrega
+                  </button>
                   <button className="btn btn-outline" onClick={fecharTurno}>Fechar turno</button>
                 </>
               )}
-              <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }} onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
+              <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
+                onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
                 + Outro estabelecimento
+              </button>
+              <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
+                onClick={() => setTela('vinculos')}>
+                Gerenciar vínculos {vincAtivos.length > 0 ? `(${vincAtivos.length})` : ''}
               </button>
             </>
           )}
@@ -315,18 +392,80 @@ export default function BoyHome({ perfil, onLogout }) {
             ))}
             <div className="divider" />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
-              <span>Subtotal entregas</span>
-              <span>R${totalEntregas.toFixed(2)}</span>
+              <span>Subtotal entregas</span><span>R${totalEntregas.toFixed(2)}</span>
             </div>
             {taxaFixa > 0 && (
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
-                <span>Taxa fixa do turno</span>
-                <span>R${taxaFixa.toFixed(2)}</span>
+                <span>Taxa fixa do turno</span><span>R${taxaFixa.toFixed(2)}</span>
               </div>
             )}
             <button className="btn btn-outline" onClick={() => setTela('relatorio')} style={{ marginTop: 8 }}>Ver relatório</button>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function GerenciarVinculos({ vincAtivos, vincPendentes, onAceitar, onRecusar, onEncerrar, onVoltar }) {
+  const [confirmandoEncerrar, setConfirmandoEncerrar] = useState(null)
+
+  return (
+    <div style={{ padding: '0 1rem' }}>
+      <div className="header" style={{ padding: '1rem 0 0.75rem' }}>
+        <button className="back-btn" onClick={onVoltar}>←</button>
+        <h1>Vínculos</h1>
+      </div>
+
+      {vincPendentes.length > 0 && (
+        <div className="card">
+          <h2>Solicitações pendentes</h2>
+          {vincPendentes.map(v => (
+            <div key={v.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontWeight: 500 }}>{v.estabelecimentos?.nome}</div>
+              <div className="muted" style={{ marginBottom: 8 }}>{v.estabelecimentos?.endereco_saida} · {v.estabelecimentos?.cidade}</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary" style={{ flex: 1, marginTop: 0, fontSize: 13 }}
+                  onClick={() => onAceitar(v.id)}>
+                  Aceitar
+                </button>
+                <button className="btn btn-outline" style={{ flex: 1, marginTop: 0, fontSize: 13, color: 'var(--red)', borderColor: 'var(--red)' }}
+                  onClick={() => onRecusar(v.id)}>
+                  Recusar
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="card">
+        <h2>Vínculos ativos</h2>
+        {vincAtivos.length === 0 ? (
+          <p className="muted">Nenhum vínculo ativo.</p>
+        ) : vincAtivos.map(v => (
+          <div key={v.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
+            <div style={{ fontWeight: 500 }}>{v.estabelecimentos?.nome}</div>
+            <div className="muted" style={{ marginBottom: 8 }}>{v.estabelecimentos?.endereco_saida} · {v.estabelecimentos?.cidade}</div>
+            {confirmandoEncerrar === v.id ? (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-sm" style={{ flex: 1, marginTop: 0, background: 'var(--red)', borderColor: 'var(--red)', color: '#fff' }}
+                  onClick={() => { onEncerrar(v.id); setConfirmandoEncerrar(null) }}>
+                  Confirmar saída
+                </button>
+                <button className="btn btn-sm btn-outline" style={{ flex: 1, marginTop: 0 }}
+                  onClick={() => setConfirmandoEncerrar(null)}>
+                  Cancelar
+                </button>
+              </div>
+            ) : (
+              <button className="btn btn-outline" style={{ fontSize: 12, marginTop: 0, color: 'var(--red)', borderColor: 'var(--red)' }}
+                onClick={() => setConfirmandoEncerrar(v.id)}>
+                Encerrar vínculo
+              </button>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -344,7 +483,7 @@ function Relatorio({ perfil, turno, estabelecimento, entregas, onVoltar, formata
       `📍 ${estabelecimento?.nome}\n` +
       `📅 ${turno?.inicio ? formatarData(turno.inicio) : new Date().toLocaleDateString('pt-BR')}\n\n` +
       entregas.map((e, i) =>
-        `#${i+1} ${e.cliente} — ${e.km > 0 ? e.km.toFixed(1)+'km' : e.bairro_destino} — R$${e.taxa.toFixed(2)}`
+        `#${i + 1} ${e.cliente} — ${e.km > 0 ? e.km.toFixed(1) + 'km' : e.bairro_destino} — R$${e.taxa.toFixed(2)}`
       ).join('\n') +
       `\n\n` +
       (fixa > 0 ? `Taxa fixa: R$${fixa.toFixed(2)}\n` : '') +
@@ -429,67 +568,42 @@ function Historico({ perfil, turnos, estabelecimentos, onVoltar, onVerRelatorio,
         <button className="back-btn" onClick={onVoltar}>←</button>
         <h1>Histórico de turnos</h1>
       </div>
-
-      {turnos.length === 0 && (
-        <p className="muted">Nenhum turno fechado ainda.</p>
-      )}
-
+      {turnos.length === 0 && <p className="muted">Nenhum turno fechado ainda.</p>}
       {turnos.map(t => {
         const es = estabelecimentos.find(e => e.id === t.estab_id)
         const esteConfirmando = confirmandoApagar === t.id
-
         return (
           <div className="card" key={t.id} style={{ marginBottom: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <div>
                 <div style={{ fontWeight: 500 }}>{es?.nome || 'Estabelecimento'}</div>
                 <div className="muted">{formatarData(t.inicio)} · {formatarHora(t.inicio)}</div>
-                {t.fim && (
-                  <div className="muted-sm">até {formatarHora(t.fim)}</div>
-                )}
+                {t.fim && <div className="muted-sm">até {formatarHora(t.fim)}</div>}
               </div>
               <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 15 }}>
                 R${(t.taxa_fixa_turno || 0).toFixed(2)}
               </div>
             </div>
-
             {!esteConfirmando ? (
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                <button
-                  className="btn btn-outline"
-                  style={{ flex: 1, marginTop: 0, fontSize: 13 }}
-                  onClick={() => onVerRelatorio(t)}
-                >
-                  Ver relatório
-                </button>
-                <button
-                  className="btn btn-outline"
+                <button className="btn btn-outline" style={{ flex: 1, marginTop: 0, fontSize: 13 }}
+                  onClick={() => onVerRelatorio(t)}>Ver relatório</button>
+                <button className="btn btn-outline"
                   style={{ marginTop: 0, fontSize: 13, color: 'var(--red)', borderColor: 'var(--red)', padding: '8px 14px' }}
-                  onClick={() => setConfirmandoApagar(t.id)}
-                >
-                  Apagar
-                </button>
+                  onClick={() => setConfirmandoApagar(t.id)}>Apagar</button>
               </div>
             ) : (
               <div className="alert alert-warn" style={{ marginTop: 10 }}>
                 <div style={{ marginBottom: 8, fontWeight: 500 }}>Apagar este turno e todas as entregas?</div>
                 <div style={{ fontSize: 12, marginBottom: 10 }}>Esta ação não pode ser desfeita.</div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    className="btn btn-sm"
+                  <button className="btn btn-sm"
                     style={{ flex: 1, marginTop: 0, background: 'var(--red)', borderColor: 'var(--red)', color: '#fff' }}
-                    onClick={() => confirmarApagar(t.id)}
-                    disabled={apagando}
-                  >
+                    onClick={() => confirmarApagar(t.id)} disabled={apagando}>
                     {apagando ? <span className="spinner"></span> : 'Sim, apagar'}
                   </button>
-                  <button
-                    className="btn btn-sm btn-outline"
-                    style={{ flex: 1, marginTop: 0 }}
-                    onClick={() => setConfirmandoApagar(null)}
-                  >
-                    Cancelar
-                  </button>
+                  <button className="btn btn-sm btn-outline" style={{ flex: 1, marginTop: 0 }}
+                    onClick={() => setConfirmandoApagar(null)}>Cancelar</button>
                 </div>
               </div>
             )}
