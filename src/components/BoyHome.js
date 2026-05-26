@@ -142,7 +142,7 @@ export default function BoyHome({ perfil, onLogout }) {
     setTela('relatorio')
   }
 
-  async function apagar Estab(estabId) {
+  async function apagarEstab(estabId) {
     // Apaga entregas dos turnos deste estab
     const { data: turnos } = await supabase.from('turnos').select('id').eq('estab_id', estabId).eq('boy_id', perfil.id)
     for (const t of (turnos || [])) {
