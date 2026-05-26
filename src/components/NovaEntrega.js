@@ -78,17 +78,21 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
     let origemMaps, destinoMaps
 
     if (modeMedicao === 'bairro') {
-      // Origem: usa bairro_saida cadastrado, fallback para endereço
       origemMaps = bairroSaidaEstab
         ? `${bairroSaidaEstab}, ${cidadeEstab}, SP, Brasil`
         : `${estabelecimento?.endereco_saida}, ${cidadeEstab}, SP, Brasil`
-      // Destino: endereço completo da IA ou bairro
-      destinoMaps = endDestino && endDestino.length > 5
-        ? `${endDestino}, ${cidade}, SP, Brasil`
-        : `${bairroDestino}, ${cidade}, SP, Brasil`
+
+      // Usa endereço completo da IA se disponível, senão usa bairro
+      const endBase = endDestino && endDestino.length > 5 ? endDestino : bairroDestino
+      // Evita duplicar cidade se já estiver no endereço
+      const jaTemCidade = endBase.toLowerCase().includes(cidade.toLowerCase())
+      destinoMaps = jaTemCidade
+        ? `${endBase}, SP, Brasil`
+        : `${endBase}, ${cidade}, SP, Brasil`
     } else {
       origemMaps = `${estabelecimento?.endereco_saida}, ${cidadeEstab}, SP, Brasil`
-      destinoMaps = endDestino.includes(cidade)
+      const jaTemCidade = endDestino.toLowerCase().includes(cidade.toLowerCase())
+      destinoMaps = jaTemCidade
         ? `${endDestino}, SP, Brasil`
         : `${endDestino}, ${cidade}, SP, Brasil`
     }
