@@ -6,13 +6,24 @@ export async function POST(request) {
       return end.replace(/\s*-\s*[^,]+/g, '').trim()
     }
 
+    function expandirAbreviacoes(end) {
+      return end
+        .replace(/\bR\.\s*/g, 'Rua ')
+        .replace(/\bAv\.\s*/g, 'Avenida ')
+        .replace(/\bAl\.\s*/g, 'Alameda ')
+        .replace(/\bTrav\.\s*/g, 'Travessa ')
+        .replace(/\bPç\.\s*/g, 'Praça ')
+        .replace(/\bEst\.\s*/g, 'Estrada ')
+        .trim()
+    }
+
     async function geocodificar(endereco) {
-      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(endereco)}&format=json&limit=1&countrycodes=br`
+      const endExpandido = expandirAbreviacoes(endereco)
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(endExpandido)}&format=json&limit=1&countrycodes=br`
       const resp = await fetch(url, {
         headers: { 'User-Agent': 'MotoTaxa/1.0 (moto-taxa.vercel.app)' }
       })
       const data = await resp.json()
-      console.log('NOMINATIM', JSON.stringify({ endereco, resultados: data.length, primeiro: data[0]?.display_name || null }))
       if (data.length === 0) return null
       return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) }
     }
@@ -34,6 +45,10 @@ export async function POST(request) {
     }
 
     const origemLimpa = limparEndereco(origem)
+    // Remove cidade duplicada se já vier no endereço
+    const origemSemDup = origemLimpa
+      .replace(/,\s*São José dos Campos.*$/i, '')
+      .trim()
 
     const partes = destino.split(',').map(p => p.trim())
     const sufixosIgnorar = ['sp', 'brasil', 'brazil', 'rj', 'mg', 'pr', 'rs', 'ba', 'sc']
@@ -44,11 +59,12 @@ export async function POST(request) {
 
     const variacoesDestino = [
       numero ? `${rua}, ${numero}, ${cidade}, SP, Brasil` : `${rua}, ${cidade}, SP, Brasil`,
-      `${limparEndereco(destino.replace(/, SP, Brasil$/i, '').replace(/, Brasil$/i, ''))}, SP, Brasil`,
-      `${rua}, SP, Brasil`,
+      numero ? `${rua}, ${numero}, SP, Brasil` : `${rua}, SP, Brasil`,
+      `${rua}, ${cidade}`,
+      `${rua}, SP`,
     ]
 
-    const coordOrigem = await geocodificar(`${origemLimpa}, São José dos Campos, SP, Brasil`)
+    const coordOrigem = await geocodificar(`${origemSemDup}, São José dos Campos, SP, Brasil`)
     if (!coordOrigem) {
       return Response.json({ ok: false, error: 'Endereço de origem não encontrado. Informe o km manualmente.' }, { status: 400 })
     }
