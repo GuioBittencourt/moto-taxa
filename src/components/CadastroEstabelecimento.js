@@ -26,6 +26,7 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
 
   const [nome, setNome] = useState(estabExistente?.nome || '')
   const [endSaida, setEndSaida] = useState(estabExistente?.endereco_saida || '')
+  const [bairroSaida, setBairroSaida] = useState(estabExistente?.bairro_saida || '')
   const [cidade, setCidade] = useState(estabExistente?.cidade || '')
   const [taxaFixaTurno, setTaxaFixaTurno] = useState(estabExistente?.taxa_fixa_turno || '')
   const [tipoCalculo, setTipoCalculo] = useState(estabExistente?.tipo_calculo || 'km')
@@ -112,11 +113,16 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
   async function salvar() {
     if (!nome.trim() || !endSaida.trim()) { setErro('Preencha nome e endereço'); return }
     if (!cidade.trim()) { setErro('Preencha a cidade'); return }
+    // Valida bairro de saída quando modo bairro a bairro
+    if (modeMedicao === 'bairro' && !bairroSaida.trim()) {
+      setErro('Preencha o bairro de saída para o modo bairro a bairro'); return
+    }
     setSalvando(true); setErro('')
     const regras = montarRegras()
     const payload = {
       nome: nome.trim(),
       endereco_saida: endSaida.trim(),
+      bairro_saida: bairroSaida.trim() || null,
       cidade: cidade.trim(),
       taxa_fixa_turno: parseFloat(taxaFixaTurno) || 0,
       tipo_calculo: tipoCalculo, regras
@@ -156,8 +162,22 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         <h2>Dados básicos</h2>
         <label>Nome do estabelecimento</label>
         <input placeholder="Ex: Alameda Pizzaria" value={nome} onChange={e => setNome(e.target.value)} />
+
         <label>Endereço de saída</label>
-        <input placeholder="Ex: Rua João de Paula, 14" value={endSaida} onChange={e => setEndSaida(e.target.value)} />
+        <input
+          placeholder="Ex: Rua João de Paula, 14"
+          value={endSaida}
+          onChange={e => setEndSaida(e.target.value.replace(/\s*-\s*.*/g, ''))}
+        />
+        <p className="muted-sm" style={{ marginTop: 4 }}>Só rua e número. Não inclua bairro ou cidade aqui.</p>
+
+        <label>Bairro de saída</label>
+        <input
+          placeholder="Ex: Jardim América"
+          value={bairroSaida}
+          onChange={e => setBairroSaida(e.target.value)}
+        />
+
         <label>Cidade</label>
         <input placeholder="Ex: São José dos Campos" value={cidade} onChange={e => setCidade(e.target.value)} />
         <label>Taxa fixa de turno — R$ (opcional)</label>
@@ -184,7 +204,6 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         ))}
       </div>
 
-      {/* Modo de medição — só para tipo km */}
       {tipoCalculo === 'km' && (
         <div className="card">
           <h2>Como medir a distância?</h2>
@@ -214,13 +233,17 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
           </div>
           <p className="muted" style={{ marginTop: 8, fontSize: 11 }}>
             {modeMedicao === 'rua'
-              ? 'Maps calcula do endereço exato de saída até o endereço exato de entrega.'
-              : 'Maps calcula do bairro de saída até o bairro de entrega. Menos preciso, mais estável.'}
+              ? 'Calcula do endereço exato de saída até o endereço exato de entrega.'
+              : 'Calcula do bairro de saída até o bairro de entrega. Menos preciso, mais estável.'}
           </p>
+          {modeMedicao === 'bairro' && !bairroSaida.trim() && (
+            <p style={{ marginTop: 6, fontSize: 11, color: 'var(--yellow)' }}>
+              ⚠ Preencha o bairro de saída nos dados básicos acima.
+            </p>
+          )}
         </div>
       )}
 
-      {/* Taxa mínima */}
       {(tipoCalculo === 'km' || tipoCalculo === 'composta') && (
         <div className="card">
           <h2>Taxa mínima por entrega (opcional)</h2>
@@ -232,7 +255,6 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         </div>
       )}
 
-      {/* Faixas de km — editáveis */}
       {tipoCalculo === 'km' && (
         <div className="card">
           <h2>Tabela de faixas</h2>
@@ -279,7 +301,6 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         </div>
       )}
 
-      {/* Bairros */}
       {tipoCalculo === 'bairro' && (
         <div className="card">
           <h2>Tabela por bairro</h2>
@@ -301,7 +322,6 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         </div>
       )}
 
-      {/* Taxa fixa */}
       {tipoCalculo === 'fixa' && (
         <div className="card">
           <h2>Taxa fixa por entrega</h2>
@@ -310,7 +330,6 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         </div>
       )}
 
-      {/* Regras livres */}
       {tipoCalculo === 'composta' && (
         <div className="card">
           <h2>Descreva as regras <span className="ai-tag">IA</span></h2>

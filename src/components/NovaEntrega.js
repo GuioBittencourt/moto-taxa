@@ -43,22 +43,20 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
   const usaBairroFixo = tipoCalculo === 'bairro'
   const bairrosCadastrados = regras.bairros || []
   const cidadeEstab = estabelecimento?.cidade || 'São José dos Campos'
+  const bairroSaidaEstab = estabelecimento?.bairro_saida || ''
 
   async function lerFoto(file) {
     setLendoFoto(true); setErro(''); setInfoMaps('')
     try {
       const imagemReduzida = await reduzirImagem(file, 1200, 0.75)
       const b64 = imagemReduzida.split(',')[1]
-
       setFotoPreview(imagemReduzida)
-
       const resp = await fetch('/api/ler-comanda', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ imageBase64: b64, mimeType: 'image/jpeg' })
       })
       const data = await resp.json()
-
       if (data.ok) {
         setCliente(data.data.cliente || '')
         setEndDestino(data.data.endereco_completo || data.data.rua || '')
@@ -75,25 +73,19 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
   }
 
   async function buscarKmMaps() {
-    setInfoMaps('Calculando distância pelo Maps...')
-
+    setInfoMaps('Calculando distância...')
     const cidade = cidadeDestino || cidadeEstab
     let origemMaps, destinoMaps
 
     if (modeMedicao === 'bairro') {
-      // Origem: usa endereço completo do estabelecimento se disponível, senão só o bairro
-      origemMaps = estabelecimento?.endereco_saida
-        ? `${estabelecimento.endereco_saida}, ${cidadeEstab}, SP, Brasil`
-        : `${estabelecimento?.endereco_saida?.split(',')[0]}, ${cidadeEstab}, SP, Brasil`
-
-      // Destino: prioriza endereço completo da IA, fallback para bairro
-      if (endDestino && endDestino.length > 5) {
-        destinoMaps = endDestino.includes(cidade)
-          ? `${endDestino}, SP, Brasil`
-          : `${endDestino}, ${cidade}, SP, Brasil`
-      } else {
-        destinoMaps = `${bairroDestino}, ${cidade}, SP, Brasil`
-      }
+      // Origem: usa bairro_saida cadastrado, fallback para endereço
+      origemMaps = bairroSaidaEstab
+        ? `${bairroSaidaEstab}, ${cidadeEstab}, SP, Brasil`
+        : `${estabelecimento?.endereco_saida}, ${cidadeEstab}, SP, Brasil`
+      // Destino: endereço completo da IA ou bairro
+      destinoMaps = endDestino && endDestino.length > 5
+        ? `${endDestino}, ${cidade}, SP, Brasil`
+        : `${bairroDestino}, ${cidade}, SP, Brasil`
     } else {
       origemMaps = `${estabelecimento?.endereco_saida}, ${cidadeEstab}, SP, Brasil`
       destinoMaps = endDestino.includes(cidade)
@@ -108,17 +100,16 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         body: JSON.stringify({ origem: origemMaps, destino: destinoMaps, modeMedicao })
       })
       const data = await resp.json()
-
       if (data.ok) {
         setKm(String(data.km))
         setInfoMaps(`Maps: ${data.km} km (${data.duracao})`)
         return data.km
       } else {
-        setInfoMaps('Maps não encontrou. Informe o km manualmente.')
+        setInfoMaps('Não encontrado. Informe o km manualmente.')
         return 0
       }
     } catch {
-      setInfoMaps('Erro ao consultar Maps. Informe o km manualmente.')
+      setInfoMaps('Erro ao calcular. Informe o km manualmente.')
       return 0
     }
   }
@@ -174,6 +165,9 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         {estabelecimento?.nome}
         <span style={{ color: 'var(--text-3)', marginLeft: 6 }}>·</span>
         <span style={{ marginLeft: 6 }}>{estabelecimento?.endereco_saida}</span>
+        {bairroSaidaEstab && (
+          <span style={{ marginLeft: 6, color: 'var(--text-3)' }}>· {bairroSaidaEstab}</span>
+        )}
         {modeMedicao === 'bairro' && (
           <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 11 }}>· bairro a bairro</span>
         )}
@@ -248,7 +242,7 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
             <label>Distância em km</label>
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <input
-                type="number" placeholder="Vazio = calcular pelo Maps"
+                type="number" placeholder="Vazio = calcular automaticamente"
                 step="0.1" value={km}
                 onChange={e => setKm(e.target.value)}
                 style={{ flex: 1 }}
