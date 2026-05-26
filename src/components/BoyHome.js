@@ -25,35 +25,67 @@ function enderecosBatem(a, b) {
 
 export default function BoyHome({ perfil, onLogout }) {
   const [tela, setTela] = useState('home')
-  const [meusEstabs, setMeusEstabs] = useState([]) // estabs criados pelo boy
+  const [meusEstabs, setMeusEstabs] = useState([])
   const [estabAtivo, setEstabAtivo] = useState(null)
   const [estabEditando, setEstabEditando] = useState(null)
   const [turnoAtivo, setTurnoAtivo] = useState(null)
   const [entregas, setEntregas] = useState([])
   const [historicoTurnos, setHistoricoTurnos] = useState([])
-  const [vinculos, setVinculos] = useState([]) // vínculos com lojas reais
+  const [vinculos, setVinculos] = useState([])
   const [loading, setLoading] = useState(true)
   const [turnoRelatorio, setTurnoRelatorio] = useState(null)
   const [entregasRelatorio, setEntregasRelatorio] = useState([])
+  const [confirmandoApagarEstab, setConfirmandoApagarEstab] = useState(null)
 
   useEffect(() => { carregarDados() }, [])
+
+  async function detectarLojas(estabs) {
+    const { data: perfisLoja } = await supabase
+      .from('profiles').select('id').eq('tipo', 'estabelecimento')
+    const idsLoja = (perfisLoja || []).map(p => p.id)
+    if (idsLoja.length === 0) return
+
+    const { data: lojas } = await supabase
+      .from('estabelecimentos').select('id, nome, endereco_saida, criado_por')
+      .in('criado_por', idsLoja)
+
+    for (const meuEstab of (estabs || [])) {
+      for (const loja of (lojas || [])) {
+        if (!nomesBatem(loja.nome, meuEstab.nome)) continue
+        if (!enderecosBatem(loja.endereco_saida, meuEstab.endereco_saida)) continue
+
+        const { data: vincExist } = await supabase
+          .from('vinculos').select('id')
+          .eq('boy_id', perfil.id).eq('estab_id', loja.id)
+          .maybeSingle()
+
+        if (!vincExist) {
+          await supabase.from('vinculos').insert({
+            boy_id: perfil.id, estab_id: loja.id,
+            ativo: true, aceito_boy: true, aceito_loja: false
+          })
+        }
+      }
+    }
+  }
 
   async function carregarDados() {
     setLoading(true)
 
-    // Estabs próprios do boy (para seus registros)
     const { data: estabs } = await supabase
-      .from('estabelecimentos').select('*')
-      .eq('criado_por', perfil.id)
+      .from('estabelecimentos').select('*').eq('criado_por', perfil.id)
     setMeusEstabs(estabs || [])
 
-    // Vínculos com lojas reais (conta de estabelecimento)
+    // Detecta lojas com match ao carregar
+    if ((estabs || []).length > 0) {
+      await detectarLojas(estabs)
+    }
+
     const { data: vincs } = await supabase
       .from('vinculos').select('*, estabelecimentos(*)')
       .eq('boy_id', perfil.id).eq('ativo', true)
     setVinculos(vincs || [])
 
-    // Turno aberto
     const { data: turnos } = await supabase
       .from('turnos').select('*').eq('boy_id', perfil.id).eq('status', 'aberto')
       .order('created_at', { ascending: false }).limit(1)
@@ -61,11 +93,9 @@ export default function BoyHome({ perfil, onLogout }) {
 
     if (turno) {
       setTurnoAtivo(turno)
-      // Procura o estab do turno nos próprios
       const estabDoTurno = (estabs || []).find(e => e.id === turno.estab_id)
       if (estabDoTurno) setEstabAtivo(estabDoTurno)
       else if ((estabs || []).length > 0) setEstabAtivo((estabs || [])[0])
-
       const { data: ents } = await supabase
         .from('entregas').select('*').eq('turno_id', turno.id)
         .order('created_at', { ascending: false })
@@ -112,6 +142,18 @@ export default function BoyHome({ perfil, onLogout }) {
     setTela('relatorio')
   }
 
+  async function apagar Estab(estabId) {
+    // Apaga entregas dos turnos deste estab
+    const { data: turnos } = await supabase.from('turnos').select('id').eq('estab_id', estabId).eq('boy_id', perfil.id)
+    for (const t of (turnos || [])) {
+      await supabase.from('entregas').delete().eq('turno_id', t.id)
+    }
+    await supabase.from('turnos').delete().eq('estab_id', estabId).eq('boy_id', perfil.id)
+    await supabase.from('estabelecimentos').delete().eq('id', estabId).eq('criado_por', perfil.id)
+    setConfirmandoApagarEstab(null)
+    await carregarDados()
+  }
+
   async function aceitarVinculo(vincId) {
     await supabase.from('vinculos').update({ aceito_boy: true }).eq('id', vincId)
     await carregarDados()
@@ -128,39 +170,6 @@ export default function BoyHome({ perfil, onLogout }) {
   }
 
   async function aoSalvarEstab(e) {
-    if (!estabEditando) {
-      // Detecta se existe loja real com conta no sistema com nome+endereço parecido
-      // Busca apenas perfis do tipo 'estabelecimento'
-      const { data: lojas } = await supabase
-        .from('estabelecimentos').select('id, nome, endereco_saida, criado_por')
-        .neq('criado_por', perfil.id)
-
-      // Filtra só lojas cujo criador é do tipo 'estabelecimento'
-      const { data: perfisLoja } = await supabase
-        .from('profiles').select('id').eq('tipo', 'estabelecimento')
-      const idsLoja = (perfisLoja || []).map(p => p.id)
-
-      for (const loja of (lojas || [])) {
-        if (!idsLoja.includes(loja.criado_por)) continue // ignora estabs criados por boys
-        if (!nomesBatem(loja.nome, e.nome)) continue
-        if (!enderecosBatem(loja.endereco_saida, e.endereco_saida)) continue
-
-        // Verifica se já existe solicitação
-        const { data: vincExist } = await supabase
-          .from('vinculos').select('id')
-          .eq('boy_id', perfil.id).eq('estab_id', loja.id)
-          .maybeSingle()
-
-        if (!vincExist) {
-          // Cria solicitação — ambos precisam aceitar
-          await supabase.from('vinculos').insert({
-            boy_id: perfil.id, estab_id: loja.id,
-            ativo: true, aceito_boy: true, aceito_loja: false
-          })
-        }
-      }
-    }
-
     setEstabEditando(null)
     setTela('home')
     await carregarDados()
@@ -234,6 +243,18 @@ export default function BoyHome({ perfil, onLogout }) {
       vincAtivos={vincAtivos} vincPendentes={vincPendentes}
       onAceitar={aceitarVinculo} onRecusar={recusarVinculo} onEncerrar={encerrarVinculo}
       onVoltar={() => setTela('home')} />
+  )
+
+  if (tela === 'gerenciar-estabs') return (
+    <GerenciarEstabs
+      estabs={meusEstabs}
+      turnoAtivoEstabId={turnoAtivo?.estab_id}
+      confirmandoApagar={confirmandoApagarEstab}
+      onConfirmarApagar={setConfirmandoApagarEstab}
+      onApagar={apagarEstab}
+      onEditar={(estab) => { setEstabEditando(estab); setTela('add-estab') }}
+      onVoltar={() => setTela('home')}
+    />
   )
 
   return (
@@ -334,6 +355,10 @@ export default function BoyHome({ perfil, onLogout }) {
                 onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
                 + Outro estabelecimento
               </button>
+              <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
+                onClick={() => setTela('gerenciar-estabs')}>
+                Gerenciar estabelecimentos ({meusEstabs.length})
+              </button>
               {vincAtivos.length > 0 && (
                 <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
                   onClick={() => setTela('vinculos')}>
@@ -375,6 +400,48 @@ export default function BoyHome({ perfil, onLogout }) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function GerenciarEstabs({ estabs, turnoAtivoEstabId, confirmandoApagar, onConfirmarApagar, onApagar, onEditar, onVoltar }) {
+  return (
+    <div style={{ padding: '0 1rem' }}>
+      <div className="header" style={{ padding: '1rem 0 0.75rem' }}>
+        <button className="back-btn" onClick={onVoltar}>←</button>
+        <h1>Estabelecimentos</h1>
+      </div>
+      {estabs.map(e => (
+        <div className="card" key={e.id} style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ fontWeight: 500 }}>{e.nome}</div>
+              <div className="muted">{e.endereco_saida} · {e.cidade}</div>
+            </div>
+            <button className="btn btn-sm btn-outline" style={{ marginTop: 0, fontSize: 11 }}
+              onClick={() => onEditar(e)}>Editar</button>
+          </div>
+          {turnoAtivoEstabId === e.id ? (
+            <p className="muted-sm" style={{ marginTop: 8 }}>Turno ativo — não é possível apagar agora.</p>
+          ) : confirmandoApagar === e.id ? (
+            <div className="alert alert-warn" style={{ marginTop: 10 }}>
+              <div style={{ marginBottom: 8, fontWeight: 500 }}>Apagar este estabelecimento e todo o histórico?</div>
+              <div style={{ fontSize: 12, marginBottom: 10 }}>Esta ação não pode ser desfeita.</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-sm"
+                  style={{ flex: 1, marginTop: 0, background: 'var(--red)', borderColor: 'var(--red)', color: '#fff' }}
+                  onClick={() => onApagar(e.id)}>Sim, apagar</button>
+                <button className="btn btn-sm btn-outline" style={{ flex: 1, marginTop: 0 }}
+                  onClick={() => onConfirmarApagar(null)}>Cancelar</button>
+              </div>
+            </div>
+          ) : (
+            <button className="btn btn-outline"
+              style={{ marginTop: 8, fontSize: 12, color: 'var(--red)', borderColor: 'var(--red)' }}
+              onClick={() => onConfirmarApagar(e.id)}>Apagar estabelecimento</button>
+          )}
+        </div>
+      ))}
     </div>
   )
 }

@@ -93,6 +93,20 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
     if (modeMedicao === 'bairro' && !bairroSaida.trim()) {
       setErro('Preencha o bairro de saída para o modo bairro a bairro'); return
     }
+
+    if (!editando) {
+      const { data: duplicata } = await supabase
+        .from('estabelecimentos').select('id')
+        .eq('criado_por', userId)
+        .ilike('nome', nome.trim())
+        .ilike('endereco_saida', endSaida.trim())
+        .maybeSingle()
+      if (duplicata) {
+        setErro('Você já tem um estabelecimento com esse nome e endereço cadastrado.')
+        return
+      }
+    }
+
     setSalvando(true); setErro('')
     const regras = montarRegras()
     const payload = {
@@ -111,7 +125,6 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
       const { data, error } = await supabase.from('estabelecimentos')
         .insert({ ...payload, criado_por: userId }).select().single()
       if (error) { setErro('Erro ao salvar: ' + error.message); setSalvando(false); return }
-      // Sem vínculo automático — boy usa estab para seus próprios registros
       onSalvo(data)
     }
     setSalvando(false)
@@ -143,7 +156,8 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         <label>Cidade</label>
         <input placeholder="Ex: São José dos Campos" value={cidade} onChange={e => setCidade(e.target.value)} />
         <label>Taxa fixa de turno — R$ (opcional)</label>
-        <input type="number" placeholder="Ex: 60.00" step="0.01" value={taxaFixaTurno} onChange={e => setTaxaFixaTurno(e.target.value)} />
+        <input type="number" placeholder="Ex: 60.00" step="0.01" value={taxaFixaTurno}
+          onChange={e => setTaxaFixaTurno(e.target.value)} />
       </div>
 
       <div className="card">
@@ -199,7 +213,8 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
           <h2>Taxa mínima por entrega (opcional)</h2>
           <p className="muted" style={{ marginBottom: 10 }}>Mesmo que o cálculo dê menos, o motoboy recebe no mínimo esse valor.</p>
           <label>Taxa mínima — R$</label>
-          <input type="number" placeholder="Ex: 3.00" step="0.01" value={taxaMinima} onChange={e => setTaxaMinima(e.target.value)} />
+          <input type="number" placeholder="Ex: 3.00" step="0.01" value={taxaMinima}
+            onChange={e => setTaxaMinima(e.target.value)} />
         </div>
       )}
 
@@ -220,7 +235,7 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
                   </div>
                 ))}
               </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 8 }}>
                 <div style={{ flex: 1 }}>
                   <select value={f.tipo} onChange={e => atualizarFaixa(i, 'tipo', e.target.value)}>
                     <option value="fixo">Valor fixo</option>
@@ -264,7 +279,8 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         <div className="card">
           <h2>Taxa fixa por entrega</h2>
           <label>Valor por entrega — R$</label>
-          <input type="number" placeholder="Ex: 8.00" step="0.01" value={taxaFixaEntrega} onChange={e => setTaxaFixaEntrega(e.target.value)} />
+          <input type="number" placeholder="Ex: 8.00" step="0.01" value={taxaFixaEntrega}
+            onChange={e => setTaxaFixaEntrega(e.target.value)} />
         </div>
       )}
 
@@ -272,8 +288,7 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         <div className="card">
           <h2>Descreva as regras <span className="ai-tag">IA</span></h2>
           <p className="muted" style={{ marginBottom: 12 }}>Escreva como funciona a precificação e a IA monta automaticamente.</p>
-          <textarea
-            placeholder={'Ex: "R$5 fixo por entrega, mais R$2 se passar de 10km"'}
+          <textarea placeholder={'Ex: "R$5 fixo por entrega, mais R$2 se passar de 10km"'}
             value={textoRegras} onChange={e => setTextoRegras(e.target.value)} />
           <button className="btn btn-primary" onClick={interpretarRegras} disabled={interpretando || !textoRegras.trim()}>
             {interpretando ? <><span className="spinner"></span>Interpretando...</> : 'Interpretar com IA'}

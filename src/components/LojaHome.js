@@ -36,6 +36,34 @@ export default function LojaHome({ perfil, onLogout }) {
 
   useEffect(() => { carregarDados() }, [])
 
+  async function detectarECriarSolicitacoes(estab) {
+    const { data: perfisBoy } = await supabase
+      .from('profiles').select('id').eq('tipo', 'boy')
+    const idsBoy = (perfisBoy || []).map(p => p.id)
+    if (idsBoy.length === 0) return
+
+    const { data: estabsBoys } = await supabase
+      .from('estabelecimentos').select('id, nome, endereco_saida, criado_por')
+      .in('criado_por', idsBoy)
+
+    for (const e of (estabsBoys || [])) {
+      if (!nomesBatem(e.nome, estab.nome)) continue
+      if (!enderecosBatem(e.endereco_saida, estab.endereco_saida)) continue
+
+      const { data: vincExist } = await supabase
+        .from('vinculos').select('id')
+        .eq('boy_id', e.criado_por).eq('estab_id', estab.id)
+        .maybeSingle()
+
+      if (!vincExist) {
+        await supabase.from('vinculos').insert({
+          boy_id: e.criado_por, estab_id: estab.id,
+          ativo: true, aceito_boy: true, aceito_loja: false
+        })
+      }
+    }
+  }
+
   async function carregarDados() {
     setLoading(true)
     const { data: estabs } = await supabase
@@ -45,6 +73,7 @@ export default function LojaHome({ perfil, onLogout }) {
       setEstabAtivo(estabs[0])
       await carregarMovimento(estabs[0].id)
       await carregarVinculos(estabs[0].id)
+      await detectarECriarSolicitacoes(estabs[0])
     }
     setLoading(false)
   }
@@ -114,38 +143,6 @@ export default function LojaHome({ perfil, onLogout }) {
     setEntregas(prev => prev.map(e => e.id === id ? { ...e, status: 'confirmado' } : e))
   }
 
-  async function detectarECriarSolicitacoes(estab) {
-    // Busca boys que cadastraram estab com nome+endereço parecido
-    const { data: estabsBoys } = await supabase
-      .from('estabelecimentos').select('id, nome, endereco_saida, criado_por')
-      .neq('criado_por', perfil.id)
-
-    // Filtra só perfis do tipo 'boy'
-    const { data: perfisboy } = await supabase
-      .from('profiles').select('id').eq('tipo', 'boy')
-    const idsBoy = (perfisboy || []).map(p => p.id)
-
-    for (const e of (estabsBoys || [])) {
-      if (!idsBoy.includes(e.criado_por)) continue
-      if (!nomesBatem(e.nome, estab.nome)) continue
-      if (!enderecosBatem(e.endereco_saida, estab.endereco_saida)) continue
-
-      const { data: vincExist } = await supabase
-        .from('vinculos').select('id')
-        .eq('boy_id', e.criado_por).eq('estab_id', estab.id)
-        .maybeSingle()
-
-      if (!vincExist) {
-        // Cria solicitação — boy já aceitou implicitamente (cadastrou o estab), loja precisa aceitar
-        await supabase.from('vinculos').insert({
-          boy_id: e.criado_por, estab_id: estab.id,
-          ativo: true, aceito_boy: true, aceito_loja: false
-        })
-      }
-    }
-    await carregarVinculos(estab.id)
-  }
-
   function formatarHora(ts) {
     if (!ts) return ''
     return new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
@@ -176,6 +173,7 @@ export default function LojaHome({ perfil, onLogout }) {
         }
         setEstabEditando(null)
         await carregarMovimento(e.id)
+        await carregarVinculos(e.id)
         setTela('home')
       }}
       onVoltar={() => { setEstabEditando(null); setTela('home') }}
