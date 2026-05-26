@@ -8,8 +8,6 @@ export async function POST(request) {
     }
 
     function limparEndereco(end) {
-      // Remove " - Bairro" ou " - Cidade" que vem colado no número
-      // Ex: "Rua João de Paula, 14 - Jardim América" → "Rua João de Paula, 14"
       return end.replace(/\s*-\s*[^,]+/g, '').trim()
     }
 
@@ -18,10 +16,11 @@ export async function POST(request) {
       const resp = await fetch(url)
       const data = await resp.json()
       const element = data.rows?.[0]?.elements?.[0]
+      console.log('MAPS_DEBUG', JSON.stringify({ orig, dest, status: data.status, elementStatus: element?.status, errorMessage: data.error_message }))
       if (data.status === 'OK' && element?.status === 'OK') {
         return { ok: true, km: +(element.distance.value / 1000).toFixed(1), duracao: element.duration.text }
       }
-      return { ok: false, status: data.status, elementStatus: element?.status }
+      return { ok: false }
     }
 
     const origemLimpa = limparEndereco(origem)
@@ -33,20 +32,17 @@ export async function POST(request) {
     const rua = limparEndereco(partesUteis[0] || partes[0])
     const numero = partesUteis[1] || ''
 
-    // Tentativa 1 — rua + número + cidade + SP, Brasil
     const t1 = numero
       ? `${rua}, ${numero}, ${cidade}, SP, Brasil`
       : `${rua}, ${cidade}, SP, Brasil`
     const r1 = await consultarMaps(origemLimpa, t1)
     if (r1.ok) return Response.json(r1)
 
-    // Tentativa 2 — endereço completo limpo
     const destinoLimpo = destino.replace(/, SP, Brasil$/i, '').replace(/, Brasil$/i, '').trim()
     const t2 = `${limparEndereco(destinoLimpo)}, SP, Brasil`
     const r2 = await consultarMaps(origemLimpa, t2)
     if (r2.ok) return Response.json(r2)
 
-    // Tentativa 3 — só rua + SP, Brasil
     const t3 = `${rua}, SP, Brasil`
     const r3 = await consultarMaps(origemLimpa, t3)
     if (r3.ok) return Response.json(r3)
