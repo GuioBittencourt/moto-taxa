@@ -2,6 +2,8 @@ export async function POST(request) {
   try {
     const { origem, destino } = await request.json()
 
+    console.log('DESTINO_RAW', JSON.stringify({ origem, destino }))
+
     function limparEndereco(end) {
       return end.replace(/\s*-\s*[^,]+/g, '').trim()
     }
@@ -46,31 +48,27 @@ export async function POST(request) {
       return { ok: false }
     }
 
-    // Extrai partes do destino
     const partes = destino.split(',').map(p => p.trim())
     const sufixosIgnorar = ['sp', 'brasil', 'brazil', 'rj', 'mg', 'pr', 'rs', 'ba', 'sc']
     const partesUteis = partes.filter(p => !sufixosIgnorar.includes(p.toLowerCase()))
 
-    // partesUteis ex: ["R. Sebastião Benedito Dias", "35", "Santana", "São José dos Campos"]
     const cidade = partesUteis.length >= 2 ? partesUteis[partesUteis.length - 1] : 'São José dos Campos'
     const rua = limparEndereco(partesUteis[0] || partes[0])
     const numero = partesUteis.length >= 3 ? partesUteis[1] : ''
-    // Bairro: penúltima parte útil, desde que não seja a cidade
-    const bairro = partesUteis.length >= 3 ? partesUteis[partesUteis.length - 2] : ''
+    const bairro = partesUteis.length >= 4 ? partesUteis[partesUteis.length - 2] : ''
 
-    // Origem: remove sufixo de cidade duplicado
-    const origemLimpa = limparEndereco(origem).replace(/,\s*[\w\s]+,\s*SP,\s*Brasil$/i, '').trim()
+    const origemLimpa = limparEndereco(origem)
+      .replace(/,\s*SP,\s*Brasil\s*$/i, '')
+      .replace(/,\s*Brasil\s*$/i, '')
+      .trim()
 
-    console.log('INPUT', JSON.stringify({ origemLimpa, rua, numero, bairro, cidade }))
+    console.log('INPUT', JSON.stringify({ origemLimpa, partesUteis, rua, numero, bairro, cidade }))
 
-    // Geocodifica origem
-    const coordOrigem = await geocodificar(`${origemLimpa}, ${cidade}, SP, Brasil`)
+    const coordOrigem = await geocodificar(`${origemLimpa}, SP, Brasil`)
     if (!coordOrigem) {
       return Response.json({ ok: false, error: 'Origem não encontrada. Informe o km manualmente.' }, { status: 400 })
     }
 
-    // Variações do destino — do mais específico ao mais genérico
-    // Nunca usa a cidade sozinha como fallback (impreciso demais)
     const variacoesDestino = [
       numero ? `${rua}, ${numero}, ${cidade}, SP` : `${rua}, ${cidade}, SP`,
       numero ? `${rua}, ${numero}, SP` : `${rua}, SP`,
