@@ -50,30 +50,32 @@ export async function POST(request) {
     const partes = destino.split(',').map(p => p.trim())
     const sufixosIgnorar = ['sp', 'brasil', 'brazil', 'rj', 'mg', 'pr', 'rs', 'ba', 'sc']
     const partesUteis = partes.filter(p => !sufixosIgnorar.includes(p.toLowerCase()))
+
+    // partesUteis ex: ["R. Sebastião Benedito Dias", "35", "Santana", "São José dos Campos"]
     const cidade = partesUteis.length >= 2 ? partesUteis[partesUteis.length - 1] : 'São José dos Campos'
     const rua = limparEndereco(partesUteis[0] || partes[0])
-    const numero = partesUteis[1] || ''
-    // Bairro: se houver 3+ partes úteis, a penúltima costuma ser o bairro
+    const numero = partesUteis.length >= 3 ? partesUteis[1] : ''
+    // Bairro: penúltima parte útil, desde que não seja a cidade
     const bairro = partesUteis.length >= 3 ? partesUteis[partesUteis.length - 2] : ''
 
-    // Origem: remove sufixo duplicado de cidade
-    const origemLimpa = limparEndereco(origem).replace(/,\s*São José dos Campos.*$/i, '').trim()
+    // Origem: remove sufixo de cidade duplicado
+    const origemLimpa = limparEndereco(origem).replace(/,\s*[\w\s]+,\s*SP,\s*Brasil$/i, '').trim()
 
     console.log('INPUT', JSON.stringify({ origemLimpa, rua, numero, bairro, cidade }))
 
     // Geocodifica origem
-    const coordOrigem = await geocodificar(`${origemLimpa}, São José dos Campos, SP, Brasil`)
+    const coordOrigem = await geocodificar(`${origemLimpa}, ${cidade}, SP, Brasil`)
     if (!coordOrigem) {
       return Response.json({ ok: false, error: 'Origem não encontrada. Informe o km manualmente.' }, { status: 400 })
     }
 
     // Variações do destino — do mais específico ao mais genérico
+    // Nunca usa a cidade sozinha como fallback (impreciso demais)
     const variacoesDestino = [
       numero ? `${rua}, ${numero}, ${cidade}, SP` : `${rua}, ${cidade}, SP`,
-      `${rua}, ${cidade}`,
-      `${rua}, SP`,
+      numero ? `${rua}, ${numero}, SP` : `${rua}, SP`,
       bairro ? `${bairro}, ${cidade}, SP` : null,
-      bairro ? `${bairro}, ${cidade}` : null,
+      bairro ? `${bairro}, SP` : null,
     ].filter(Boolean)
 
     let coordDestino = null
