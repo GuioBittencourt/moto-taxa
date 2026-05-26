@@ -77,17 +77,28 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
   async function buscarKmMaps() {
     setInfoMaps('Calculando distância pelo Maps...')
 
+    const cidade = cidadeDestino || cidadeEstab
     let origemMaps, destinoMaps
 
     if (modeMedicao === 'bairro') {
-      const bairroOrigem = estabelecimento?.endereco_saida?.split(',')[0] || estabelecimento?.endereco_saida
-      origemMaps = `${bairroOrigem}, ${cidadeEstab}, SP, Brasil`
-      destinoMaps = `${bairroDestino || endDestino}, ${cidadeDestino || cidadeEstab}, SP, Brasil`
+      // Origem: usa endereço completo do estabelecimento se disponível, senão só o bairro
+      origemMaps = estabelecimento?.endereco_saida
+        ? `${estabelecimento.endereco_saida}, ${cidadeEstab}, SP, Brasil`
+        : `${estabelecimento?.endereco_saida?.split(',')[0]}, ${cidadeEstab}, SP, Brasil`
+
+      // Destino: prioriza endereço completo da IA, fallback para bairro
+      if (endDestino && endDestino.length > 5) {
+        destinoMaps = endDestino.includes(cidade)
+          ? `${endDestino}, SP, Brasil`
+          : `${endDestino}, ${cidade}, SP, Brasil`
+      } else {
+        destinoMaps = `${bairroDestino}, ${cidade}, SP, Brasil`
+      }
     } else {
       origemMaps = `${estabelecimento?.endereco_saida}, ${cidadeEstab}, SP, Brasil`
-      destinoMaps = endDestino.includes(cidadeDestino || cidadeEstab)
-        ? endDestino + ', SP, Brasil'
-        : `${endDestino}, ${cidadeDestino || cidadeEstab}, SP, Brasil`
+      destinoMaps = endDestino.includes(cidade)
+        ? `${endDestino}, SP, Brasil`
+        : `${endDestino}, ${cidade}, SP, Brasil`
     }
 
     try {
