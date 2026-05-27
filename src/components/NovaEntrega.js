@@ -22,7 +22,7 @@ function reduzirImagem(file, maxWidth, qualidade) {
   })
 }
 
-export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfirmado, onVoltar }) {
+export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfirmado, onVoltar, origemOverride }) {
   const [modoInput, setModoInput] = useState('digitar')
   const [cliente, setCliente] = useState('')
   const [endDestino, setEndDestino] = useState('')
@@ -44,6 +44,7 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
   const bairrosCadastrados = regras.bairros || []
   const cidadeEstab = estabelecimento?.cidade || 'São José dos Campos'
   const bairroSaidaEstab = estabelecimento?.bairro_saida || ''
+  const origem = origemOverride || 'boy'
 
   async function lerFoto(file) {
     setLendoFoto(true); setErro(''); setInfoMaps('')
@@ -81,10 +82,7 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
       origemMaps = bairroSaidaEstab
         ? `${bairroSaidaEstab}, ${cidadeEstab}, SP, Brasil`
         : `${estabelecimento?.endereco_saida}, ${cidadeEstab}, SP, Brasil`
-
-      // Usa endereço completo da IA se disponível, senão usa bairro
       const endBase = endDestino && endDestino.length > 5 ? endDestino : bairroDestino
-      // Evita duplicar cidade se já estiver no endereço
       const jaTemCidade = endBase.toLowerCase().includes(cidade.toLowerCase())
       destinoMaps = jaTemCidade
         ? `${endBase}, SP, Brasil`
@@ -151,7 +149,7 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
       km: resultado.km, taxa: resultado.valor,
       descricao_calculo: resultado.descricao,
       tipo_calculo: tipoCalculo,
-      status: 'pendente', origem: 'boy'
+      status: 'pendente', origem
     })
     if (error) { setErro('Erro ao salvar: ' + error.message); setSalvando(false); return }
     onConfirmado(resultado)
@@ -174,6 +172,9 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         )}
         {modeMedicao === 'bairro' && (
           <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 11 }}>· bairro a bairro</span>
+        )}
+        {origem === 'loja' && (
+          <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 11 }}>· lançando como loja</span>
         )}
       </div>
 

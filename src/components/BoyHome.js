@@ -23,6 +23,83 @@ function enderecosBatem(a, b) {
   return palavras.filter(p => nb.includes(p)).length >= 2
 }
 
+function calcularStatusCheck(entA, entB) {
+  // Verde: nome + endereço + valor + km compatíveis (km tolerância ±2)
+  // Amarelo: nome + endereço batem, km diverge ±2 mas valor bate
+  // Vermelho: valor diferente ou sem par
+  if (!entB) return 'vermelho'
+  const nomeOk = nomesBatem(entA.cliente || '', entB.cliente || '') ||
+    normalizar(entA.cliente) === normalizar(entB.cliente)
+  const endOk = enderecosBatem(
+    entA.endereco_destino || entA.bairro_destino || '',
+    entB.endereco_destino || entB.bairro_destino || ''
+  )
+  const valorOk = Math.abs((entA.taxa || 0) - (entB.taxa || 0)) < 0.01
+  const kmDiff = Math.abs((entA.km || 0) - (entB.km || 0))
+  if (!nomeOk || !endOk) return 'vermelho'
+  if (!valorOk) return 'vermelho'
+  if (kmDiff > 2) return 'amarelo'
+  return 'verde'
+}
+
+async function rodarMatch(turnoId) {
+  const { data: todas } = await supabase
+    .from('entregas').select('*').eq('turno_id', turnoId)
+  if (!todas || todas.length === 0) return
+
+  const doBoy = todas.filter(e => e.origem === 'boy')
+  const daLoja = todas.filter(e => e.origem === 'loja')
+
+  const usadosLoja = new Set()
+  const pares = []
+
+  for (const boy of doBoy) {
+    let melhor = null
+    let melhorScore = -1
+
+    for (const loja of daLoja) {
+      if (usadosLoja.has(loja.id)) continue
+      const nomeOk = nomesBatem(boy.cliente || '', loja.cliente || '') ||
+        normalizar(boy.cliente) === normalizar(loja.cliente)
+      const endOk = enderecosBatem(
+        boy.endereco_destino || boy.bairro_destino || '',
+        loja.endereco_destino || loja.bairro_destino || ''
+      )
+      if (!nomeOk || !endOk) continue
+      const score = (nomeOk ? 2 : 0) + (endOk ? 2 : 0) +
+        (Math.abs((boy.taxa || 0) - (loja.taxa || 0)) < 0.01 ? 2 : 0)
+      if (score > melhorScore) { melhor = loja; melhorScore = score }
+    }
+
+    if (melhor) {
+      usadosLoja.add(melhor.id)
+      const status = calcularStatusCheck(boy, melhor)
+      pares.push({ boyId: boy.id, lojaId: melhor.id, status })
+    } else {
+      pares.push({ boyId: boy.id, lojaId: null, status: 'vermelho' })
+    }
+  }
+
+  // Loja sem par
+  for (const loja of daLoja) {
+    if (!usadosLoja.has(loja.id)) {
+      pares.push({ boyId: null, lojaId: loja.id, status: 'vermelho' })
+    }
+  }
+
+  // Atualiza no banco
+  for (const par of pares) {
+    if (par.boyId && par.lojaId) {
+      await supabase.from('entregas').update({ par_id: par.lojaId, status_check: par.status }).eq('id', par.boyId)
+      await supabase.from('entregas').update({ par_id: par.boyId, status_check: par.status }).eq('id', par.lojaId)
+    } else if (par.boyId) {
+      await supabase.from('entregas').update({ par_id: null, status_check: 'vermelho' }).eq('id', par.boyId)
+    } else if (par.lojaId) {
+      await supabase.from('entregas').update({ par_id: null, status_check: 'vermelho' }).eq('id', par.lojaId)
+    }
+  }
+}
+
 export default function BoyHome({ perfil, onLogout }) {
   const [tela, setTela] = useState('home')
   const [meusEstabs, setMeusEstabs] = useState([])
@@ -36,6 +113,7 @@ export default function BoyHome({ perfil, onLogout }) {
   const [turnoRelatorio, setTurnoRelatorio] = useState(null)
   const [entregasRelatorio, setEntregasRelatorio] = useState([])
   const [confirmandoApagarEstab, setConfirmandoApagarEstab] = useState(null)
+  const [solicitandoFechamento, setSolicitandoFechamento] = useState(false)
 
   useEffect(() => { carregarDados() }, [])
 
@@ -53,12 +131,9 @@ export default function BoyHome({ perfil, onLogout }) {
       for (const loja of (lojas || [])) {
         if (!nomesBatem(loja.nome, meuEstab.nome)) continue
         if (!enderecosBatem(loja.endereco_saida, meuEstab.endereco_saida)) continue
-
         const { data: vincExist } = await supabase
           .from('vinculos').select('id')
-          .eq('boy_id', perfil.id).eq('estab_id', loja.id)
-          .maybeSingle()
-
+          .eq('boy_id', perfil.id).eq('estab_id', loja.id).maybeSingle()
         if (!vincExist) {
           await supabase.from('vinculos').insert({
             boy_id: perfil.id, estab_id: loja.id,
@@ -71,15 +146,10 @@ export default function BoyHome({ perfil, onLogout }) {
 
   async function carregarDados() {
     setLoading(true)
-
     const { data: estabs } = await supabase
       .from('estabelecimentos').select('*').eq('criado_por', perfil.id)
     setMeusEstabs(estabs || [])
-
-    // Detecta lojas com match ao carregar
-    if ((estabs || []).length > 0) {
-      await detectarLojas(estabs)
-    }
+    if ((estabs || []).length > 0) await detectarLojas(estabs)
 
     const { data: vincs } = await supabase
       .from('vinculos').select('*, estabelecimentos(*)')
@@ -120,6 +190,11 @@ export default function BoyHome({ perfil, onLogout }) {
       .from('entregas').select('*').eq('turno_id', turnoId)
       .order('created_at', { ascending: false })
     setEntregas(data || [])
+    await rodarMatch(turnoId)
+    const { data: atualizadas } = await supabase
+      .from('entregas').select('*').eq('turno_id', turnoId)
+      .order('created_at', { ascending: false })
+    setEntregas(atualizadas || [])
   }
 
   async function abrirTurno() {
@@ -129,47 +204,58 @@ export default function BoyHome({ perfil, onLogout }) {
       boy_id: perfil.id, estab_id: estabAtivo.id, data: hoje,
       inicio: new Date().toISOString(),
       taxa_fixa_turno: estabAtivo.taxa_fixa_turno || 0,
-      status: 'aberto'
+      status: 'aberto', fechamento_boy: false, fechamento_loja: false
     }).select().single()
     setTurnoAtivo(data); setEntregas([])
   }
 
-  async function fecharTurno() {
-    await supabase.from('turnos').update({
-      status: 'fechado', fim: new Date().toISOString()
-    }).eq('id', turnoAtivo.id)
-    await carregarHistorico()
-    setTela('relatorio')
+  async function solicitarFechamento() {
+    setSolicitandoFechamento(true)
+    // Roda match antes de solicitar
+    await rodarMatch(turnoAtivo.id)
+    const { data: ents } = await supabase
+      .from('entregas').select('*').eq('turno_id', turnoAtivo.id)
+    setEntregas(ents || [])
+
+    const temVermelho = (ents || []).some(e => e.status_check === 'vermelho')
+    if (temVermelho) {
+      alert('Ainda há divergências em vermelho. Corrija antes de fechar o turno.')
+      setSolicitandoFechamento(false)
+      return
+    }
+
+    await supabase.from('turnos').update({ fechamento_boy: true }).eq('id', turnoAtivo.id)
+    const { data: turnoAtualizado } = await supabase
+      .from('turnos').select('*').eq('id', turnoAtivo.id).single()
+    setTurnoAtivo(turnoAtualizado)
+
+    if (turnoAtualizado.fechamento_loja) {
+      await supabase.from('turnos').update({
+        status: 'fechado', fim: new Date().toISOString()
+      }).eq('id', turnoAtivo.id)
+      await carregarHistorico()
+      setTela('relatorio')
+    }
+    setSolicitandoFechamento(false)
   }
 
   async function apagarEstab(estabId) {
-  // Atualiza estado local imediatamente
-  setMeusEstabs(prev => prev.filter(e => e.id !== estabId))
-  if (estabAtivo?.id === estabId) setEstabAtivo(null)
-  setConfirmandoApagarEstab(null)
-
-  // Apaga na ordem correta respeitando foreign keys
-  // 1. Entregas dos turnos
-  const { data: turnosDoEstab } = await supabase.from('turnos').select('id')
-    .eq('estab_id', estabId).eq('boy_id', perfil.id)
-  for (const t of (turnosDoEstab || [])) {
-    await supabase.from('entregas').delete().eq('turno_id', t.id)
+    setMeusEstabs(prev => prev.filter(e => e.id !== estabId))
+    if (estabAtivo?.id === estabId) setEstabAtivo(null)
+    setConfirmandoApagarEstab(null)
+    const { data: turnosDoEstab } = await supabase.from('turnos').select('id')
+      .eq('estab_id', estabId).eq('boy_id', perfil.id)
+    for (const t of (turnosDoEstab || [])) {
+      await supabase.from('entregas').delete().eq('turno_id', t.id)
+    }
+    await supabase.from('turnos').delete().eq('estab_id', estabId).eq('boy_id', perfil.id)
+    await supabase.from('vinculos').delete().eq('estab_id', estabId).eq('boy_id', perfil.id)
+    await supabase.from('convites').delete().eq('estab_id', estabId)
+    await supabase.from('estabelecimentos').delete().eq('id', estabId).eq('criado_por', perfil.id)
+    const { data: estabs } = await supabase.from('estabelecimentos').select('*').eq('criado_por', perfil.id)
+    setMeusEstabs(estabs || [])
+    if ((estabs || []).length > 0) setEstabAtivo(estabs[0])
   }
-  // 2. Turnos
-  await supabase.from('turnos').delete().eq('estab_id', estabId).eq('boy_id', perfil.id)
-  // 3. Vínculos
-  await supabase.from('vinculos').delete().eq('estab_id', estabId).eq('boy_id', perfil.id)
-  // 4. Convites
-  await supabase.from('convites').delete().eq('estab_id', estabId)
-  // 5. Estabelecimento
-  await supabase.from('estabelecimentos').delete().eq('id', estabId).eq('criado_por', perfil.id)
-
-  // Recarrega lista
-  const { data: estabs } = await supabase
-    .from('estabelecimentos').select('*').eq('criado_por', perfil.id)
-  setMeusEstabs(estabs || [])
-  if ((estabs || []).length > 0) setEstabAtivo(estabs[0])
-}
 
   async function aceitarVinculo(vincId) {
     await supabase.from('vinculos').update({ aceito_boy: true }).eq('id', vincId)
@@ -202,11 +288,28 @@ export default function BoyHome({ perfil, onLogout }) {
     return new Date(ts).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
   }
 
-  const totalEntregas = entregas.reduce((s, e) => s + e.taxa, 0)
+  const totalEntregas = entregas.filter(e => e.origem === 'boy').reduce((s, e) => s + e.taxa, 0)
   const taxaFixa = turnoAtivo?.taxa_fixa_turno || estabAtivo?.taxa_fixa_turno || 0
   const totalComFixa = totalEntregas + taxaFixa
   const vincPendentes = vinculos.filter(v => v.aceito_loja && !v.aceito_boy)
   const vincAtivos = vinculos.filter(v => v.aceito_boy && v.aceito_loja)
+  const temVinculoAtivo = vincAtivos.length > 0 && turnoAtivo !== null
+  const turnoComDuploCheck = temVinculoAtivo
+  const podeFechamento = turnoAtivo?.fechamento_boy
+
+  function corCheck(status) {
+    if (status === 'verde') return '#22c55e'
+    if (status === 'amarelo') return '#f59e0b'
+    if (status === 'vermelho') return '#ef4444'
+    return 'var(--text-3)'
+  }
+
+  function labelCheck(status) {
+    if (status === 'verde') return '✓ Conferido'
+    if (status === 'amarelo') return '⚠ Divergência leve'
+    if (status === 'vermelho') return '✗ Divergência'
+    return '— Aguardando'
+  }
 
   if (tela === 'add-estab') return (
     <CadastroEstabelecimento
@@ -219,13 +322,13 @@ export default function BoyHome({ perfil, onLogout }) {
   if (tela === 'nova-entrega') return (
     <NovaEntrega
       userId={perfil.id} estabelecimento={estabAtivo} turnoId={turnoAtivo?.id}
-      onConfirmado={() => { carregarEntregas(turnoAtivo.id); setTela('home') }}
+      onConfirmado={async () => { await carregarEntregas(turnoAtivo.id); setTela('home') }}
       onVoltar={() => setTela('home')}
     />
   )
 
   if (tela === 'relatorio') return (
-    <Relatorio perfil={perfil} turno={turnoAtivo} estabelecimento={estabAtivo} entregas={entregas}
+    <Relatorio perfil={perfil} turno={turnoAtivo} estabelecimento={estabAtivo} entregas={entregas.filter(e => e.origem === 'boy')}
       onVoltar={() => { setTurnoAtivo(null); setEntregas([]); setTela('home') }}
       formatarHora={formatarHora} formatarData={formatarData} />
   )
@@ -233,7 +336,7 @@ export default function BoyHome({ perfil, onLogout }) {
   if (tela === 'relatorio-historico') return (
     <Relatorio perfil={perfil} turno={turnoRelatorio}
       estabelecimento={meusEstabs.find(e => e.id === turnoRelatorio?.estab_id)}
-      entregas={entregasRelatorio}
+      entregas={entregasRelatorio.filter(e => e.origem === 'boy')}
       onVoltar={() => setTela('historico')}
       formatarHora={formatarHora} formatarData={formatarData} />
   )
@@ -264,14 +367,12 @@ export default function BoyHome({ perfil, onLogout }) {
 
   if (tela === 'gerenciar-estabs') return (
     <GerenciarEstabs
-      estabs={meusEstabs}
-      turnoAtivoEstabId={turnoAtivo?.estab_id}
+      estabs={meusEstabs} turnoAtivoEstabId={turnoAtivo?.estab_id}
       confirmandoApagar={confirmandoApagarEstab}
       onConfirmarApagar={setConfirmandoApagarEstab}
       onApagar={apagarEstab}
       onEditar={(estab) => { setEstabEditando(estab); setTela('add-estab') }}
-      onVoltar={() => setTela('home')}
-    />
+      onVoltar={() => setTela('home')} />
   )
 
   return (
@@ -307,10 +408,10 @@ export default function BoyHome({ perfil, onLogout }) {
         <div className="grid2">
           <div className="metric">
             <div className="metric-val yellow">R${totalEntregas.toFixed(2)}</div>
-            <div className="metric-lbl">Entregas do turno</div>
+            <div className="metric-lbl">Minhas entregas</div>
           </div>
           <div className="metric">
-            <div className="metric-val">{entregas.length}</div>
+            <div className="metric-val">{entregas.filter(e => e.origem === 'boy').length}</div>
             <div className="metric-lbl">Corridas</div>
           </div>
         </div>
@@ -365,7 +466,22 @@ export default function BoyHome({ perfil, onLogout }) {
                   <button className="btn btn-primary" onClick={() => setTela('nova-entrega')} style={{ marginTop: 8 }}>
                     + Registrar entrega
                   </button>
-                  <button className="btn btn-outline" onClick={fecharTurno}>Fechar turno</button>
+                  {turnoComDuploCheck ? (
+                    podeFechamento ? (
+                      <div className="alert alert-info" style={{ marginTop: 8 }}>
+                        Aguardando confirmação do estabelecimento para fechar.
+                      </div>
+                    ) : (
+                      <button className="btn btn-outline" onClick={solicitarFechamento} disabled={solicitandoFechamento} style={{ marginTop: 4 }}>
+                        {solicitandoFechamento ? <><span className="spinner"></span>Verificando...</> : 'Solicitar fechamento'}
+                      </button>
+                    )
+                  ) : (
+                    <button className="btn btn-outline" onClick={async () => {
+                      await supabase.from('turnos').update({ status: 'fechado', fim: new Date().toISOString() }).eq('id', turnoAtivo.id)
+                      await carregarHistorico(); setTela('relatorio')
+                    }}>Fechar turno</button>
+                  )}
                 </>
               )}
               <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
@@ -389,24 +505,42 @@ export default function BoyHome({ perfil, onLogout }) {
         {entregas.length > 0 && (
           <div className="card">
             <h2>Entregas do turno</h2>
+            {turnoComDuploCheck && (
+              <p className="muted" style={{ marginBottom: 8, fontSize: 11 }}>
+                Verde = conferido · Amarelo = divergência leve · Vermelho = divergência
+              </p>
+            )}
             {entregas.map(e => (
-              <div className="row" key={e.id}>
+              <div className="row" key={e.id} style={{
+                borderLeft: turnoComDuploCheck ? `3px solid ${corCheck(e.status_check)}` : 'none',
+                paddingLeft: turnoComDuploCheck ? 8 : 0
+              }}>
                 <div>
-                  <div style={{ fontWeight: 500, fontSize: 14 }}>{e.cliente}</div>
+                  <div style={{ fontWeight: 500, fontSize: 14 }}>
+                    {e.cliente}
+                    {e.origem === 'loja' && (
+                      <span style={{ fontSize: 10, color: 'var(--text-3)', marginLeft: 6 }}>loja</span>
+                    )}
+                  </div>
                   <div className="muted">
                     {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
                     {e.created_at && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>{formatarHora(e.created_at)}</span>}
                   </div>
+                  {turnoComDuploCheck && (
+                    <div style={{ fontSize: 10, color: corCheck(e.status_check), marginTop: 2 }}>
+                      {labelCheck(e.status_check)}
+                    </div>
+                  )}
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 15 }}>R${e.taxa.toFixed(2)}</div>
-                  <div className="muted-sm">{e.status === 'pendente' ? 'aguardando' : 'confirmado'}</div>
+                  <div className="muted-sm">{e.origem === 'loja' ? 'loja' : 'você'}</div>
                 </div>
               </div>
             ))}
             <div className="divider" />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
-              <span>Subtotal entregas</span><span>R${totalEntregas.toFixed(2)}</span>
+              <span>Subtotal (minhas)</span><span>R${totalEntregas.toFixed(2)}</span>
             </div>
             {taxaFixa > 0 && (
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
@@ -465,14 +599,12 @@ function GerenciarEstabs({ estabs, turnoAtivoEstabId, confirmandoApagar, onConfi
 
 function GerenciarVinculos({ vincAtivos, vincPendentes, onAceitar, onRecusar, onEncerrar, onVoltar }) {
   const [confirmandoEncerrar, setConfirmandoEncerrar] = useState(null)
-
   return (
     <div style={{ padding: '0 1rem' }}>
       <div className="header" style={{ padding: '1rem 0 0.75rem' }}>
         <button className="back-btn" onClick={onVoltar}>←</button>
         <h1>Vínculos</h1>
       </div>
-
       {vincPendentes.length > 0 && (
         <div className="card">
           <h2>Solicitações pendentes</h2>
@@ -491,7 +623,6 @@ function GerenciarVinculos({ vincAtivos, vincPendentes, onAceitar, onRecusar, on
           ))}
         </div>
       )}
-
       <div className="card">
         <h2>Vínculos ativos</h2>
         {vincAtivos.length === 0 ? (

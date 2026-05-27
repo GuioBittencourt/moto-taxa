@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import CadastroEstabelecimento from './CadastroEstabelecimento'
+import NovaEntrega from './NovaEntrega'
 
 function normalizar(str) {
   return (str || '').toLowerCase().trim()
@@ -22,17 +23,33 @@ function enderecosBatem(a, b) {
   return palavras.filter(p => nb.includes(p)).length >= 2
 }
 
+function corCheck(status) {
+  if (status === 'verde') return '#22c55e'
+  if (status === 'amarelo') return '#f59e0b'
+  if (status === 'vermelho') return '#ef4444'
+  return 'var(--text-3)'
+}
+
+function labelCheck(status) {
+  if (status === 'verde') return '✓ Conferido'
+  if (status === 'amarelo') return '⚠ Divergência leve'
+  if (status === 'vermelho') return '✗ Divergência'
+  return '— Aguardando'
+}
+
 export default function LojaHome({ perfil, onLogout }) {
   const [tela, setTela] = useState('home')
   const [estabelecimentos, setEstabelecimentos] = useState([])
   const [estabAtivo, setEstabAtivo] = useState(null)
   const [estabEditando, setEstabEditando] = useState(null)
   const [turnosAtivos, setTurnosAtivos] = useState([])
+  const [turnoSelecionado, setTurnoSelecionado] = useState(null)
   const [entregas, setEntregas] = useState([])
   const [vinculos, setVinculos] = useState([])
   const [linkConvite, setLinkConvite] = useState('')
   const [gerandoLink, setGerandoLink] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [solicitandoFechamento, setSolicitandoFechamento] = useState(false)
 
   useEffect(() => { carregarDados() }, [])
 
@@ -41,20 +58,15 @@ export default function LojaHome({ perfil, onLogout }) {
       .from('profiles').select('id').eq('tipo', 'boy')
     const idsBoy = (perfisBoy || []).map(p => p.id)
     if (idsBoy.length === 0) return
-
     const { data: estabsBoys } = await supabase
       .from('estabelecimentos').select('id, nome, endereco_saida, criado_por')
       .in('criado_por', idsBoy)
-
     for (const e of (estabsBoys || [])) {
       if (!nomesBatem(e.nome, estab.nome)) continue
       if (!enderecosBatem(e.endereco_saida, estab.endereco_saida)) continue
-
       const { data: vincExist } = await supabase
         .from('vinculos').select('id')
-        .eq('boy_id', e.criado_por).eq('estab_id', estab.id)
-        .maybeSingle()
-
+        .eq('boy_id', e.criado_por).eq('estab_id', estab.id).maybeSingle()
       if (!vincExist) {
         await supabase.from('vinculos').insert({
           boy_id: e.criado_por, estab_id: estab.id,
@@ -71,26 +83,44 @@ export default function LojaHome({ perfil, onLogout }) {
     setEstabelecimentos(estabs || [])
     if (estabs?.length > 0) {
       setEstabAtivo(estabs[0])
-      await carregarMovimento(estabs[0].id)
       await carregarVinculos(estabs[0].id)
+      await carregarTurnos(estabs[0].id)
       await detectarECriarSolicitacoes(estabs[0])
     }
     setLoading(false)
   }
 
-  async function carregarMovimento(estabId) {
+  async function carregarTurnos(estabId) {
+    // Busca boys vinculados ativos
+    const { data: vincs } = await supabase
+      .from('vinculos').select('boy_id')
+      .eq('estab_id', estabId).eq('ativo', true)
+      .eq('aceito_boy', true).eq('aceito_loja', true)
+    const boyIds = (vincs || []).map(v => v.boy_id)
+
+    if (boyIds.length === 0) { setTurnosAtivos([]); setEntregas([]); return }
+
+    // Busca turnos abertos dos boys vinculados
     const { data: turnos } = await supabase
-      .from('turnos').select('*, profiles(nome)').eq('estab_id', estabId).eq('status', 'aberto')
+      .from('turnos').select('*, profiles(nome)')
+      .in('boy_id', boyIds).eq('status', 'aberto')
       .order('created_at', { ascending: false })
     setTurnosAtivos(turnos || [])
 
-    const ids = (turnos || []).map(t => t.id)
-    if (ids.length > 0) {
-      const { data: ents } = await supabase
-        .from('entregas').select('*').in('turno_id', ids)
-        .order('created_at', { ascending: false })
-      setEntregas(ents || [])
-    } else setEntregas([])
+    if ((turnos || []).length > 0) {
+      setTurnoSelecionado(turnos[0])
+      await carregarEntregas(turnos[0].id)
+    } else {
+      setTurnoSelecionado(null)
+      setEntregas([])
+    }
+  }
+
+  async function carregarEntregas(turnoId) {
+    const { data } = await supabase
+      .from('entregas').select('*').eq('turno_id', turnoId)
+      .order('created_at', { ascending: false })
+    setEntregas(data || [])
   }
 
   async function carregarVinculos(estabId) {
@@ -107,7 +137,6 @@ export default function LojaHome({ perfil, onLogout }) {
       .from('convites').select('codigo')
       .eq('estab_id', estabAtivo.id).eq('status', 'pendente').eq('tipo', 'link')
       .maybeSingle()
-
     let codigo = convExist?.codigo
     if (!codigo) {
       const { data: novo } = await supabase
@@ -131,16 +160,40 @@ export default function LojaHome({ perfil, onLogout }) {
   async function aceitarVinculo(vincId) {
     await supabase.from('vinculos').update({ aceito_loja: true }).eq('id', vincId)
     await carregarVinculos(estabAtivo.id)
+    await carregarTurnos(estabAtivo.id)
   }
 
   async function encerrarVinculo(vincId) {
     await supabase.from('vinculos').update({ ativo: false }).eq('id', vincId)
     await carregarVinculos(estabAtivo.id)
+    await carregarTurnos(estabAtivo.id)
   }
 
-  async function aprovarEntrega(id) {
-    await supabase.from('entregas').update({ status: 'confirmado' }).eq('id', id)
-    setEntregas(prev => prev.map(e => e.id === id ? { ...e, status: 'confirmado' } : e))
+  async function solicitarFechamento() {
+    if (!turnoSelecionado) return
+    setSolicitandoFechamento(true)
+
+    const { data: ents } = await supabase
+      .from('entregas').select('*').eq('turno_id', turnoSelecionado.id)
+    const temVermelho = (ents || []).some(e => e.status_check === 'vermelho')
+    if (temVermelho) {
+      alert('Ainda há divergências em vermelho. Corrija antes de fechar.')
+      setSolicitandoFechamento(false)
+      return
+    }
+
+    await supabase.from('turnos').update({ fechamento_loja: true }).eq('id', turnoSelecionado.id)
+    const { data: turnoAtualizado } = await supabase
+      .from('turnos').select('*').eq('id', turnoSelecionado.id).single()
+    setTurnoSelecionado(turnoAtualizado)
+
+    if (turnoAtualizado.fechamento_boy) {
+      await supabase.from('turnos').update({
+        status: 'fechado', fim: new Date().toISOString()
+      }).eq('id', turnoSelecionado.id)
+      await carregarTurnos(estabAtivo.id)
+    }
+    setSolicitandoFechamento(false)
   }
 
   function formatarHora(ts) {
@@ -153,15 +206,16 @@ export default function LojaHome({ perfil, onLogout }) {
     return new Date(ts).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
   }
 
-  const totalCusto = entregas.reduce((s, e) => s + e.taxa, 0)
-  const pendentes = entregas.filter(e => e.status === 'pendente')
   const vincPendentes = vinculos.filter(v => v.ativo && v.aceito_boy && !v.aceito_loja)
   const vincAtivos = vinculos.filter(v => v.ativo && v.aceito_boy && v.aceito_loja)
+  const entregasBoy = entregas.filter(e => e.origem === 'boy')
+  const entregasLoja = entregas.filter(e => e.origem === 'loja')
+  const totalCusto = entregasBoy.reduce((s, e) => s + e.taxa, 0)
+  const temVermelho = entregas.some(e => e.status_check === 'vermelho')
 
   if (tela === 'add-estab') return (
     <CadastroEstabelecimento
-      userId={perfil.id}
-      estabExistente={estabEditando}
+      userId={perfil.id} estabExistente={estabEditando}
       onSalvo={async (e) => {
         if (estabEditando) {
           setEstabelecimentos(prev => prev.map(x => x.id === e.id ? e : x))
@@ -172,12 +226,33 @@ export default function LojaHome({ perfil, onLogout }) {
           await detectarECriarSolicitacoes(e)
         }
         setEstabEditando(null)
-        await carregarMovimento(e.id)
+        await carregarTurnos(e.id)
         await carregarVinculos(e.id)
         setTela('home')
       }}
       onVoltar={() => { setEstabEditando(null); setTela('home') }}
     />
+  )
+
+  if (tela === 'nova-entrega' && turnoSelecionado) return (
+    <NovaEntrega
+      userId={perfil.id}
+      estabelecimento={estabAtivo}
+      turnoId={turnoSelecionado.id}
+      origemOverride="loja"
+      onConfirmado={async () => {
+        await carregarEntregas(turnoSelecionado.id)
+        setTela('home')
+      }}
+      onVoltar={() => setTela('home')}
+    />
+  )
+
+  if (tela === 'vinculos') return (
+    <GerenciarVinculosLoja
+      vincAtivos={vincAtivos} vincPendentes={vincPendentes}
+      onAceitar={aceitarVinculo} onEncerrar={encerrarVinculo}
+      onVoltar={() => setTela('home')} />
   )
 
   return (
@@ -219,101 +294,103 @@ export default function LojaHome({ perfil, onLogout }) {
           </div>
         ) : (
           <>
-            {estabelecimentos.length > 1 && (
-              <div className="card">
-                <label>Estabelecimento</label>
-                <select value={estabAtivo?.id || ''} onChange={async e => {
-                  const es = estabelecimentos.find(x => x.id === e.target.value)
-                  setEstabAtivo(es)
-                  await carregarMovimento(es.id)
-                  await carregarVinculos(es.id)
-                }}>
-                  {estabelecimentos.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
-                </select>
-              </div>
-            )}
-
             <div className="grid2">
               <div className="metric">
                 <div className="metric-val yellow">R${totalCusto.toFixed(2)}</div>
-                <div className="metric-lbl">Custo total</div>
+                <div className="metric-lbl">Custo do turno</div>
               </div>
               <div className="metric">
-                <div className="metric-val">{entregas.length}</div>
+                <div className="metric-val">{entregasBoy.length}</div>
                 <div className="metric-lbl">Entregas</div>
               </div>
             </div>
 
+            {/* Turno ativo */}
             <div className="card">
-              <h2>Motoboys ativos</h2>
+              <h2>Turno em andamento</h2>
               {turnosAtivos.length === 0 ? (
-                <p className="muted">Nenhum turno aberto no momento</p>
-              ) : turnosAtivos.map(t => {
-                const entsT = entregas.filter(e => e.turno_id === t.id)
-                const totT = entsT.reduce((s, e) => s + e.taxa, 0)
-                return (
-                  <div className="row" key={t.id}>
-                    <div>
-                      <span style={{ fontWeight: 500 }}>{t.profiles?.nome}</span>
-                      <div className="muted-sm">desde {formatarData(t.inicio)} {formatarHora(t.inicio)}</div>
-                    </div>
-                    <span style={{ color: 'var(--yellow)', fontWeight: 600 }}>
-                      {entsT.length} entregas · R${totT.toFixed(2)}
-                    </span>
-                  </div>
-                )
-              })}
+                <p className="muted">Nenhum turno aberto pelos motoboys vinculados.</p>
+              ) : (
+                <>
+                  {turnosAtivos.length > 1 && (
+                    <select value={turnoSelecionado?.id || ''} onChange={async e => {
+                      const t = turnosAtivos.find(x => x.id === e.target.value)
+                      setTurnoSelecionado(t)
+                      await carregarEntregas(t.id)
+                    }} style={{ marginBottom: 8 }}>
+                      {turnosAtivos.map(t => (
+                        <option key={t.id} value={t.id}>{t.profiles?.nome} — desde {formatarHora(t.inicio)}</option>
+                      ))}
+                    </select>
+                  )}
+                  {turnoSelecionado && (
+                    <>
+                      <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 8 }}>
+                        <span style={{ fontWeight: 500 }}>{turnoSelecionado.profiles?.nome}</span>
+                        {' · '}desde {formatarData(turnoSelecionado.inicio)} às {formatarHora(turnoSelecionado.inicio)}
+                      </div>
+                      <button className="btn btn-primary" onClick={() => setTela('nova-entrega')} style={{ marginBottom: 4 }}>
+                        + Registrar entrega
+                      </button>
+                      {turnoSelecionado.fechamento_loja ? (
+                        <div className="alert alert-info" style={{ marginTop: 8 }}>
+                          Aguardando confirmação do motoboy para fechar.
+                        </div>
+                      ) : (
+                        <button className="btn btn-outline" onClick={solicitarFechamento}
+                          disabled={solicitandoFechamento || temVermelho}
+                          style={{ marginTop: 4 }}>
+                          {solicitandoFechamento ? <><span className="spinner"></span>Verificando...</> :
+                            temVermelho ? 'Divergências pendentes' : 'Solicitar fechamento'}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
             </div>
 
-            {pendentes.length > 0 && (
-              <div className="card">
-                <h2>Pendentes de aprovação</h2>
-                {pendentes.map(e => (
-                  <div className="row" key={e.id}>
-                    <div>
-                      <div style={{ fontWeight: 500 }}>{e.cliente}</div>
-                      <div className="muted">
-                        {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
-                        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>{formatarHora(e.created_at)}</span>
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                      <span style={{ fontWeight: 600 }}>R${e.taxa.toFixed(2)}</span>
-                      <button className="btn btn-sm"
-                        style={{ background: 'var(--green-dim)', color: 'var(--green)', border: '1px solid rgba(34,197,94,0.2)', marginTop: 0 }}
-                        onClick={() => aprovarEntrega(e.id)}>Aprovar</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
+            {/* Entregas com duplo check */}
             {entregas.length > 0 && (
               <div className="card">
-                <h2>Todas as entregas</h2>
+                <h2>Conferência de entregas</h2>
+                <p className="muted" style={{ marginBottom: 8, fontSize: 11 }}>
+                  Verde = conferido · Amarelo = divergência leve · Vermelho = divergência
+                </p>
                 {entregas.map(e => (
-                  <div className="row" key={e.id}>
+                  <div className="row" key={e.id} style={{
+                    borderLeft: `3px solid ${corCheck(e.status_check)}`,
+                    paddingLeft: 8
+                  }}>
                     <div>
-                      <div style={{ fontWeight: 500 }}>{e.cliente}</div>
+                      <div style={{ fontWeight: 500, fontSize: 14 }}>
+                        {e.cliente}
+                        <span style={{ fontSize: 10, color: 'var(--text-3)', marginLeft: 6 }}>
+                          {e.origem === 'loja' ? 'loja' : 'boy'}
+                        </span>
+                      </div>
                       <div className="muted">
                         {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
-                        <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>{formatarHora(e.created_at)}</span>
+                        {e.created_at && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>{formatarHora(e.created_at)}</span>}
+                      </div>
+                      <div style={{ fontSize: 10, color: corCheck(e.status_check), marginTop: 2 }}>
+                        {labelCheck(e.status_check)}
                       </div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontWeight: 600 }}>R${e.taxa.toFixed(2)}</div>
-                      <div className="muted-sm">{e.status === 'confirmado' ? 'confirmado' : 'pendente'}</div>
                     </div>
                   </div>
                 ))}
                 <div className="divider" />
                 <div className="total-bar">
-                  <div className="total-bar-lbl">Total geral</div>
+                  <div className="total-bar-lbl">Total (entregas boy)</div>
                   <div className="total-bar-val">R${totalCusto.toFixed(2)}</div>
                 </div>
               </div>
             )}
 
+            {/* Convidar + vínculos */}
             <div className="card">
               <h2>Convidar motoboy</h2>
               <p className="muted" style={{ marginBottom: 10 }}>
@@ -359,30 +436,18 @@ export default function LojaHome({ perfil, onLogout }) {
           </>
         )}
       </div>
-
-      {tela === 'vinculos' && (
-        <div style={{ position: 'fixed', inset: 0, background: 'var(--bg)', zIndex: 100, overflowY: 'auto' }}>
-          <GerenciarVinculosLoja
-            vincAtivos={vincAtivos} vincPendentes={vincPendentes}
-            onAceitar={aceitarVinculo} onEncerrar={encerrarVinculo}
-            onVoltar={() => setTela('home')}
-          />
-        </div>
-      )}
     </div>
   )
 }
 
 function GerenciarVinculosLoja({ vincAtivos, vincPendentes, onAceitar, onEncerrar, onVoltar }) {
   const [confirmandoEncerrar, setConfirmandoEncerrar] = useState(null)
-
   return (
     <div style={{ padding: '0 1rem' }}>
       <div className="header" style={{ padding: '1rem 0 0.75rem' }}>
         <button className="back-btn" onClick={onVoltar}>←</button>
         <h1>Motoboys vinculados</h1>
       </div>
-
       {vincPendentes.length > 0 && (
         <div className="card">
           <h2>Aguardando aprovação</h2>
@@ -390,14 +455,12 @@ function GerenciarVinculosLoja({ vincAtivos, vincPendentes, onAceitar, onEncerra
             <div key={v.id}>
               <div style={{ fontWeight: 500 }}>{v.profiles?.nome || 'Motoboy'}</div>
               <div className="muted" style={{ marginBottom: 8 }}>{v.profiles?.email}</div>
-              <button className="btn btn-primary"
-                style={{ marginTop: 0, marginBottom: 12, fontSize: 13 }}
+              <button className="btn btn-primary" style={{ marginTop: 0, marginBottom: 12, fontSize: 13 }}
                 onClick={() => onAceitar(v.id)}>Aprovar vínculo</button>
             </div>
           ))}
         </div>
       )}
-
       <div className="card">
         <h2>Ativos</h2>
         {vincAtivos.length === 0 ? (
