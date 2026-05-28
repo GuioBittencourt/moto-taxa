@@ -1,4 +1,4 @@
-'use client'
+'u'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import CadastroEstabelecimento from './CadastroEstabelecimento'
@@ -91,7 +91,6 @@ export default function LojaHome({ perfil, onLogout }) {
   }
 
   async function carregarTurnos(estabId) {
-    // Busca boys vinculados ativos
     const { data: vincs } = await supabase
       .from('vinculos').select('boy_id')
       .eq('estab_id', estabId).eq('ativo', true)
@@ -100,7 +99,6 @@ export default function LojaHome({ perfil, onLogout }) {
 
     if (boyIds.length === 0) { setTurnosAtivos([]); setEntregas([]); return }
 
-    // Busca turnos abertos dos boys vinculados
     const { data: turnos } = await supabase
       .from('turnos').select('*, profiles(nome)')
       .in('boy_id', boyIds).eq('status', 'aberto')
@@ -209,13 +207,13 @@ export default function LojaHome({ perfil, onLogout }) {
   const vincPendentes = vinculos.filter(v => v.ativo && v.aceito_boy && !v.aceito_loja)
   const vincAtivos = vinculos.filter(v => v.ativo && v.aceito_boy && v.aceito_loja)
   const entregasBoy = entregas.filter(e => e.origem === 'boy')
-  const entregasLoja = entregas.filter(e => e.origem === 'loja')
   const totalCusto = entregasBoy.reduce((s, e) => s + e.taxa, 0)
   const temVermelho = entregas.some(e => e.status_check === 'vermelho')
 
   if (tela === 'add-estab') return (
     <CadastroEstabelecimento
-      userId={perfil.id} estabExistente={estabEditando}
+      userId={perfil.id}
+      estabExistente={estabEditando}
       onSalvo={async (e) => {
         if (estabEditando) {
           setEstabelecimentos(prev => prev.map(x => x.id === e.id ? e : x))
@@ -236,7 +234,7 @@ export default function LojaHome({ perfil, onLogout }) {
 
   if (tela === 'nova-entrega' && turnoSelecionado) return (
     <NovaEntrega
-      userId={perfil.id}
+      userId={turnoSelecionado.boy_id}
       estabelecimento={estabAtivo}
       turnoId={turnoSelecionado.id}
       origemOverride="loja"
@@ -305,7 +303,6 @@ export default function LojaHome({ perfil, onLogout }) {
               </div>
             </div>
 
-            {/* Turno ativo */}
             <div className="card">
               <h2>Turno em andamento</h2>
               {turnosAtivos.length === 0 ? (
@@ -350,7 +347,6 @@ export default function LojaHome({ perfil, onLogout }) {
               )}
             </div>
 
-            {/* Entregas com duplo check */}
             {entregas.length > 0 && (
               <div className="card">
                 <h2>Conferência de entregas</h2>
@@ -390,7 +386,6 @@ export default function LojaHome({ perfil, onLogout }) {
               </div>
             )}
 
-            {/* Convidar + vínculos */}
             <div className="card">
               <h2>Convidar motoboy</h2>
               <p className="muted" style={{ marginBottom: 10 }}>
@@ -455,7 +450,8 @@ function GerenciarVinculosLoja({ vincAtivos, vincPendentes, onAceitar, onEncerra
             <div key={v.id}>
               <div style={{ fontWeight: 500 }}>{v.profiles?.nome || 'Motoboy'}</div>
               <div className="muted" style={{ marginBottom: 8 }}>{v.profiles?.email}</div>
-              <button className="btn btn-primary" style={{ marginTop: 0, marginBottom: 12, fontSize: 13 }}
+              <button className="btn btn-primary"
+                style={{ marginTop: 0, marginBottom: 12, fontSize: 13 }}
                 onClick={() => onAceitar(v.id)}>Aprovar vínculo</button>
             </div>
           ))}
