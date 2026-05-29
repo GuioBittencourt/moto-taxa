@@ -234,14 +234,14 @@ export default function BoyHome({ perfil, onLogout }) {
     />
   )
 
-  if (tela === 'nova-entrega') return (
-    <NovaEntrega
+  if (tela === 'nova-entrega' || tela === 'editar-entrega') return (
+  <NovaEntrega
     userId={perfil.id} estabelecimento={estabAtivo} turnoId={turnoAtivo?.id}
-    entregaExistente={entregaEditando}
+    entregaExistente={tela === 'editar-entrega' ? entregaEditando : null}
     onConfirmado={async () => { setEntregaEditando(null); await carregarEntregas(turnoAtivo.id); setTela('home') }}
     onVoltar={() => { setEntregaEditando(null); setTela('home') }}
   />
-  )
+)
 
   if (tela === 'relatorio') return (
     <Relatorio perfil={perfil} turno={turnoAtivo} estabelecimento={estabAtivo}

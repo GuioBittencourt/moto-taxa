@@ -234,19 +234,15 @@ export default function LojaHome({ perfil, onLogout }) {
     />
   )
 
-  if (tela === 'nova-entrega' && turnoSelecionado) return (
-    <NovaEntrega
-      userId={turnoSelecionado.boy_id}
-      estabelecimento={estabAtivo}
-      turnoId={turnoSelecionado.id}
-      origemOverride="loja"
-      onConfirmado={async () => {
-        await carregarEntregas(turnoSelecionado.id)
-        setTela('home')
-      }}
-      onVoltar={() => setTela('home')}
-    />
-  )
+  if ((tela === 'nova-entrega' || tela === 'editar-entrega') && turnoSelecionado) return (
+  <NovaEntrega
+    userId={turnoSelecionado.boy_id} estabelecimento={estabAtivo} turnoId={turnoSelecionado.id}
+    entregaExistente={tela === 'editar-entrega' ? entregaEditando : null}
+    origemOverride="loja"
+    onConfirmado={async () => { setEntregaEditando(null); await carregarEntregas(turnoSelecionado.id); setTela('home') }}
+    onVoltar={() => { setEntregaEditando(null); setTela('home') }}
+  />
+)
 
   if (tela === 'vinculos') return (
     <GerenciarVinculosLoja
