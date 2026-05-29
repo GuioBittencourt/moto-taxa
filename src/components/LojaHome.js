@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import CadastroEstabelecimento from './CadastroEstabelecimento'
 import NovaEntrega from './NovaEntrega'
-import { rodarMatch } from './BoyHome'
+import { rodarMatch } from '../lib/match'
 
 function normalizar(str) {
   return (str || '').toLowerCase().trim()
