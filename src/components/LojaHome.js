@@ -51,6 +51,7 @@ export default function LojaHome({ perfil, onLogout }) {
   const [gerandoLink, setGerandoLink] = useState(false)
   const [loading, setLoading] = useState(true)
   const [solicitandoFechamento, setSolicitandoFechamento] = useState(false)
+  const [entregaEditando, setEntregaEditando] = useState(null)
 
   useEffect(() => { carregarDados() }, [])
 
