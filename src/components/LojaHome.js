@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import CadastroEstabelecimento from './CadastroEstabelecimento'
 import NovaEntrega from './NovaEntrega'
+import { rodarMatch } from './BoyHome'
 
 function normalizar(str) {
   return (str || '').toLowerCase().trim()
@@ -115,6 +116,7 @@ export default function LojaHome({ perfil, onLogout }) {
   }
 
   async function carregarEntregas(turnoId) {
+    await rodarMatch(turnoId)
     const { data } = await supabase
       .from('entregas').select('*').eq('turno_id', turnoId)
       .order('created_at', { ascending: false })
@@ -356,12 +358,13 @@ export default function LojaHome({ perfil, onLogout }) {
                 {entregas.map(e => (
                   <div className="row" key={e.id} style={{
                     borderLeft: `3px solid ${corCheck(e.status_check)}`,
-                    paddingLeft: 8
+                    paddingLeft: 8,
+                    opacity: e.origem === 'loja' ? 0.75 : 1
                   }}>
                     <div>
                       <div style={{ fontWeight: 500, fontSize: 14 }}>
                         {e.cliente}
-                        <span style={{ fontSize: 10, color: 'var(--text-3)', marginLeft: 6 }}>
+                        <span style={{ fontSize: 10, color: e.origem === 'loja' ? 'var(--yellow)' : 'var(--text-3)', marginLeft: 6 }}>
                           {e.origem === 'loja' ? 'loja' : 'boy'}
                         </span>
                       </div>
