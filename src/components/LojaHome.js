@@ -350,44 +350,52 @@ export default function LojaHome({ perfil, onLogout }) {
             </div>
 
             {entregas.length > 0 && (
-              <div className="card">
-                <h2>Conferência de entregas</h2>
-                <p className="muted" style={{ marginBottom: 8, fontSize: 11 }}>
-                  Verde = conferido · Amarelo = divergência leve · Vermelho = divergência
-                </p>
-                {entregas.map(e => (
-                  <div className="row" key={e.id} style={{
-                    borderLeft: `3px solid ${corCheck(e.status_check)}`,
-                    paddingLeft: 8,
-                    opacity: e.origem === 'loja' ? 0.75 : 1
-                  }}>
-                    <div>
-                      <div style={{ fontWeight: 500, fontSize: 14 }}>
-                        {e.cliente}
-                        <span style={{ fontSize: 10, color: e.origem === 'loja' ? 'var(--yellow)' : 'var(--text-3)', marginLeft: 6 }}>
-                          {e.origem === 'loja' ? 'loja' : 'boy'}
-                        </span>
-                      </div>
-                      <div className="muted">
-                        {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
-                        {e.created_at && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>{formatarHora(e.created_at)}</span>}
-                      </div>
-                      <div style={{ fontSize: 10, color: corCheck(e.status_check), marginTop: 2 }}>
-                        {labelCheck(e.status_check)}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontWeight: 600 }}>R${e.taxa.toFixed(2)}</div>
-                    </div>
-                  </div>
-                ))}
-                <div className="divider" />
-                <div className="total-bar">
-                  <div className="total-bar-lbl">Total (entregas boy)</div>
-                  <div className="total-bar-val">R${totalCusto.toFixed(2)}</div>
-                </div>
-              </div>
+  <div className="card">
+    <h2>Conferência de entregas</h2>
+    <p className="muted" style={{ marginBottom: 8, fontSize: 11 }}>
+      Verde = conferido · Amarelo = divergência leve · Vermelho = divergência
+    </p>
+    {entregas.map(e => (
+      <div className="row" key={e.id}
+        onClick={() => {
+          if (e.origem === 'loja') { setEntregaEditando(e); setTela('editar-entrega') }
+        }}
+        style={{
+          borderLeft: `3px solid ${corCheck(e.status_check)}`,
+          paddingLeft: 8,
+          opacity: e.origem === 'loja' ? 1 : 0.7,
+          cursor: e.origem === 'loja' ? 'pointer' : 'default'
+        }}>
+        <div>
+          <div style={{ fontWeight: 500, fontSize: 14 }}>
+            {e.cliente}
+            <span style={{ fontSize: 10, color: e.origem === 'loja' ? 'var(--yellow)' : 'var(--text-3)', marginLeft: 6 }}>
+              {e.origem === 'loja' ? 'loja' : 'boy'}
+            </span>
+            {e.origem === 'loja' && (
+              <span style={{ fontSize: 10, color: 'var(--text-3)', marginLeft: 6 }}>· toque para editar</span>
             )}
+          </div>
+          <div className="muted">
+            {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
+            {e.created_at && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>{formatarHora(e.created_at)}</span>}
+          </div>
+          <div style={{ fontSize: 10, color: corCheck(e.status_check), marginTop: 2 }}>
+            {labelCheck(e.status_check)}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontWeight: 600 }}>R${e.taxa.toFixed(2)}</div>
+        </div>
+      </div>
+    ))}
+    <div className="divider" />
+    <div className="total-bar">
+      <div className="total-bar-lbl">Total (entregas boy)</div>
+      <div className="total-bar-val">R${totalCusto.toFixed(2)}</div>
+    </div>
+  </div>
+)}
 
             <div className="card">
               <h2>Convidar motoboy</h2>

@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { calcularTaxa } from '../lib/engine'
+import { rodarMatch } from '../lib/match'
 
 function reduzirImagem(file, maxWidth, qualidade) {
   return new Promise((resolve, reject) => {
@@ -22,17 +23,24 @@ function reduzirImagem(file, maxWidth, qualidade) {
   })
 }
 
-export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfirmado, onVoltar, origemOverride }) {
+// entregaExistente: objeto da entrega para edição, null para nova
+export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfirmado, onVoltar, origemOverride, entregaExistente }) {
+  const editando = !!entregaExistente
+
   const [modoInput, setModoInput] = useState('digitar')
-  const [cliente, setCliente] = useState('')
-  const [endDestino, setEndDestino] = useState('')
-  const [bairroDestino, setBairroDestino] = useState('')
+  const [cliente, setCliente] = useState(entregaExistente?.cliente || '')
+  const [endDestino, setEndDestino] = useState(entregaExistente?.endereco_destino || '')
+  const [bairroDestino, setBairroDestino] = useState(entregaExistente?.bairro_destino || '')
   const [cidadeDestino, setCidadeDestino] = useState('')
-  const [km, setKm] = useState('')
-  const [resultado, setResultado] = useState(null)
+  const [km, setKm] = useState(entregaExistente?.km ? String(entregaExistente.km) : '')
+  const [resultado, setResultado] = useState(
+    entregaExistente ? { km: entregaExistente.km, valor: entregaExistente.taxa, descricao: entregaExistente.descricao_calculo } : null
+  )
   const [lendoFoto, setLendoFoto] = useState(false)
   const [calculando, setCalculando] = useState(false)
   const [salvando, setSalvando] = useState(false)
+  const [apagando, setApagando] = useState(false)
+  const [confirmandoApagar, setConfirmandoApagar] = useState(false)
   const [erro, setErro] = useState('')
   const [infoMaps, setInfoMaps] = useState('')
   const [fotoPreview, setFotoPreview] = useState(null)
@@ -84,15 +92,11 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         : `${estabelecimento?.endereco_saida}, ${cidadeEstab}, SP, Brasil`
       const endBase = endDestino && endDestino.length > 5 ? endDestino : bairroDestino
       const jaTemCidade = endBase.toLowerCase().includes(cidade.toLowerCase())
-      destinoMaps = jaTemCidade
-        ? `${endBase}, SP, Brasil`
-        : `${endBase}, ${cidade}, SP, Brasil`
+      destinoMaps = jaTemCidade ? `${endBase}, SP, Brasil` : `${endBase}, ${cidade}, SP, Brasil`
     } else {
       origemMaps = `${estabelecimento?.endereco_saida}, ${cidadeEstab}, SP, Brasil`
       const jaTemCidade = endDestino.toLowerCase().includes(cidade.toLowerCase())
-      destinoMaps = jaTemCidade
-        ? `${endDestino}, SP, Brasil`
-        : `${endDestino}, ${cidade}, SP, Brasil`
+      destinoMaps = jaTemCidade ? `${endDestino}, SP, Brasil` : `${endDestino}, ${cidade}, SP, Brasil`
     }
 
     try {
@@ -141,71 +145,81 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
   async function confirmar() {
     if (!resultado) return
     setSalvando(true)
-    const { error } = await supabase.from('entregas').insert({
-      turno_id: turnoId, boy_id: userId, estab_id: estabelecimento.id,
-      cliente: cliente || 'Cliente',
-      endereco_destino: endDestino,
-      bairro_destino: bairroDestino,
-      km: resultado.km, taxa: resultado.valor,
-      descricao_calculo: resultado.descricao,
-      tipo_calculo: tipoCalculo,
-      status: 'pendente', origem
-    })
-    if (error) { setErro('Erro ao salvar: ' + error.message); setSalvando(false); return }
+
+    if (editando) {
+      const { error } = await supabase.from('entregas').update({
+        cliente: cliente || 'Cliente',
+        endereco_destino: endDestino,
+        bairro_destino: bairroDestino,
+        km: resultado.km,
+        taxa: resultado.valor,
+        descricao_calculo: resultado.descricao,
+        status_check: 'pendente'
+      }).eq('id', entregaExistente.id)
+      if (error) { setErro('Erro ao salvar: ' + error.message); setSalvando(false); return }
+      await rodarMatch(turnoId)
+    } else {
+      const { error } = await supabase.from('entregas').insert({
+        turno_id: turnoId, boy_id: userId, estab_id: estabelecimento.id,
+        cliente: cliente || 'Cliente',
+        endereco_destino: endDestino,
+        bairro_destino: bairroDestino,
+        km: resultado.km, taxa: resultado.valor,
+        descricao_calculo: resultado.descricao,
+        tipo_calculo: tipoCalculo,
+        status: 'pendente', origem
+      })
+      if (error) { setErro('Erro ao salvar: ' + error.message); setSalvando(false); return }
+      await rodarMatch(turnoId)
+    }
+
     onConfirmado(resultado)
     setSalvando(false)
+  }
+
+  async function apagarEntrega() {
+    setApagando(true)
+    await supabase.from('entregas').delete().eq('id', entregaExistente.id)
+    await rodarMatch(turnoId)
+    onConfirmado(null)
+    setApagando(false)
   }
 
   return (
     <div style={{ padding: '0 1rem' }}>
       <div className="header" style={{ padding: '1rem 0 0.75rem' }}>
         <button className="back-btn" onClick={onVoltar}>←</button>
-        <h1>Nova entrega</h1>
+        <h1>{editando ? 'Editar entrega' : 'Nova entrega'}</h1>
       </div>
 
       <div style={{ fontSize: 12, color: 'var(--text-2)', padding: '0 0 12px', borderBottom: '1px solid var(--border)', marginBottom: 12 }}>
         {estabelecimento?.nome}
         <span style={{ color: 'var(--text-3)', marginLeft: 6 }}>·</span>
         <span style={{ marginLeft: 6 }}>{estabelecimento?.endereco_saida}</span>
-        {bairroSaidaEstab && (
-          <span style={{ marginLeft: 6, color: 'var(--text-3)' }}>· {bairroSaidaEstab}</span>
-        )}
-        {modeMedicao === 'bairro' && (
-          <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 11 }}>· bairro a bairro</span>
-        )}
-        {origem === 'loja' && (
-          <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 11 }}>· lançando como loja</span>
-        )}
+        {bairroSaidaEstab && <span style={{ marginLeft: 6, color: 'var(--text-3)' }}>· {bairroSaidaEstab}</span>}
+        {modeMedicao === 'bairro' && <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 11 }}>· bairro a bairro</span>}
+        {origem === 'loja' && <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 11 }}>· lançando como loja</span>}
       </div>
 
       <div className="card">
-        <div className="tabs">
-          <div className={`tab ${modoInput === 'digitar' ? 'active' : ''}`} onClick={() => setModoInput('digitar')}>
-            Digitar
+        {!editando && (
+          <div className="tabs">
+            <div className={`tab ${modoInput === 'digitar' ? 'active' : ''}`} onClick={() => setModoInput('digitar')}>Digitar</div>
+            <div className={`tab ${modoInput === 'foto' ? 'active' : ''}`} onClick={() => setModoInput('foto')}>
+              Foto da comanda <span className="ai-tag">IA</span>
+            </div>
           </div>
-          <div className={`tab ${modoInput === 'foto' ? 'active' : ''}`} onClick={() => setModoInput('foto')}>
-            Foto da comanda <span className="ai-tag">IA</span>
-          </div>
-        </div>
+        )}
 
-        {modoInput === 'foto' && (
+        {modoInput === 'foto' && !editando && (
           <>
             <div className="upload-area" onClick={() => document.getElementById('foto-input').click()}>
               <div style={{ fontSize: 24, marginBottom: 8 }}>📷</div>
-              {lendoFoto
-                ? <><span className="spinner"></span>IA lendo a comanda...</>
-                : 'Tirar foto ou selecionar imagem'}
+              {lendoFoto ? <><span className="spinner"></span>IA lendo a comanda...</> : 'Tirar foto ou selecionar imagem'}
             </div>
-            <input
-              type="file" id="foto-input"
-              accept="image/*,image/heic,image/heif"
-              capture="environment"
-              style={{ display: 'none' }}
-              onChange={e => e.target.files[0] && lerFoto(e.target.files[0])}
-            />
-            {fotoPreview && (
-              <img src={fotoPreview} style={{ width: '100%', borderRadius: 8, marginTop: 10, maxHeight: 180, objectFit: 'cover' }} />
-            )}
+            <input type="file" id="foto-input" accept="image/*,image/heic,image/heif" capture="environment"
+              style={{ display: 'none' }} onChange={e => e.target.files[0] && lerFoto(e.target.files[0])} />
+            {fotoPreview && <img src={fotoPreview} style={{ width: '100%', borderRadius: 8, marginTop: 10, maxHeight: 180, objectFit: 'cover' }} />}
           </>
         )}
 
@@ -237,27 +251,17 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
             {modeMedicao === 'bairro' && (
               <>
                 <label>Bairro de destino</label>
-                <input
-                  placeholder="Ex: Jardim Satélite"
-                  value={bairroDestino}
-                  onChange={e => { setBairroDestino(e.target.value); setInfoMaps(''); setKm('') }}
-                />
+                <input placeholder="Ex: Jardim Satélite" value={bairroDestino}
+                  onChange={e => { setBairroDestino(e.target.value); setInfoMaps(''); setKm('') }} />
               </>
             )}
             <label>Distância em km</label>
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-              <input
-                type="number" placeholder="Vazio = calcular automaticamente"
-                step="0.1" value={km}
-                onChange={e => setKm(e.target.value)}
-                style={{ flex: 1 }}
-              />
-              <button
-                className="btn btn-outline btn-sm"
+              <input type="number" placeholder="Vazio = calcular automaticamente"
+                step="0.1" value={km} onChange={e => setKm(e.target.value)} style={{ flex: 1 }} />
+              <button className="btn btn-outline btn-sm"
                 style={{ marginTop: 0, padding: '0 14px', height: 42 }}
-                onClick={calcular}
-                disabled={calculando}
-              >
+                onClick={calcular} disabled={calculando}>
                 {calculando ? <span className="spinner"></span> : 'Calcular'}
               </button>
             </div>
@@ -289,10 +293,45 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
               <div className="metric-lbl">Taxa</div>
             </div>
           </div>
-          <p className="muted" style={{ marginTop: 8 }}>{resultado.descricao}</p>
+          {resultado.descricao && <p className="muted" style={{ marginTop: 8 }}>{resultado.descricao}</p>}
           <button className="btn btn-primary" onClick={confirmar} disabled={salvando} style={{ marginTop: 14 }}>
-            {salvando ? <><span className="spinner"></span>Salvando...</> : 'Confirmar entrega'}
+            {salvando ? <><span className="spinner"></span>Salvando...</> : editando ? 'Salvar alterações' : 'Confirmar entrega'}
           </button>
+        </div>
+      )}
+
+      {editando && !resultado && (
+        <div className="card">
+          <p className="muted" style={{ marginBottom: 10 }}>Edite os campos acima e clique em Calcular para recalcular a taxa, ou salve diretamente se só alterou o cliente.</p>
+          <button className="btn btn-primary" onClick={confirmar} disabled={salvando}>
+            {salvando ? <><span className="spinner"></span>Salvando...</> : 'Salvar alterações'}
+          </button>
+        </div>
+      )}
+
+      {editando && (
+        <div className="card">
+          {confirmandoApagar ? (
+            <>
+              <p style={{ fontWeight: 500, marginBottom: 8 }}>Apagar este lançamento?</p>
+              <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>O match será recalculado automaticamente.</p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-sm"
+                  style={{ flex: 1, marginTop: 0, background: 'var(--red)', borderColor: 'var(--red)', color: '#fff' }}
+                  onClick={apagarEntrega} disabled={apagando}>
+                  {apagando ? <span className="spinner"></span> : 'Sim, apagar'}
+                </button>
+                <button className="btn btn-sm btn-outline" style={{ flex: 1, marginTop: 0 }}
+                  onClick={() => setConfirmandoApagar(false)}>Cancelar</button>
+              </div>
+            </>
+          ) : (
+            <button className="btn btn-outline"
+              style={{ color: 'var(--red)', borderColor: 'var(--red)', fontSize: 13 }}
+              onClick={() => setConfirmandoApagar(true)}>
+              Apagar lançamento
+            </button>
+          )}
         </div>
       )}
 

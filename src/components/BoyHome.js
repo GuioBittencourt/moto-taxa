@@ -52,6 +52,7 @@ export default function BoyHome({ perfil, onLogout }) {
   const [entregasRelatorio, setEntregasRelatorio] = useState([])
   const [confirmandoApagarEstab, setConfirmandoApagarEstab] = useState(null)
   const [solicitandoFechamento, setSolicitandoFechamento] = useState(false)
+  const [entregaEditando, setEntregaEditando] = useState(null)
 
   useEffect(() => { carregarDados() }, [])
 
@@ -235,10 +236,11 @@ export default function BoyHome({ perfil, onLogout }) {
 
   if (tela === 'nova-entrega') return (
     <NovaEntrega
-      userId={perfil.id} estabelecimento={estabAtivo} turnoId={turnoAtivo?.id}
-      onConfirmado={async () => { await carregarEntregas(turnoAtivo.id); setTela('home') }}
-      onVoltar={() => setTela('home')}
-    />
+    userId={perfil.id} estabelecimento={estabAtivo} turnoId={turnoAtivo?.id}
+    entregaExistente={entregaEditando}
+    onConfirmado={async () => { setEntregaEditando(null); await carregarEntregas(turnoAtivo.id); setTela('home') }}
+    onVoltar={() => { setEntregaEditando(null); setTela('home') }}
+  />
   )
 
   if (tela === 'relatorio') return (
@@ -419,54 +421,62 @@ export default function BoyHome({ perfil, onLogout }) {
         </div>
 
         {entregas.length > 0 && (
-          <div className="card">
-            <h2>Entregas do turno</h2>
-            {turnoComDuploCheck && (
-              <p className="muted" style={{ marginBottom: 8, fontSize: 11 }}>
-                Verde = conferido · Amarelo = divergência leve · Vermelho = divergência
-              </p>
+  <div className="card">
+    <h2>Entregas do turno</h2>
+    {turnoComDuploCheck && (
+      <p className="muted" style={{ marginBottom: 8, fontSize: 11 }}>
+        Verde = conferido · Amarelo = divergência leve · Vermelho = divergência
+      </p>
+    )}
+    {entregas.map(e => (
+      <div className="row" key={e.id}
+        onClick={() => {
+          if (e.origem === 'boy') { setEntregaEditando(e); setTela('editar-entrega') }
+        }}
+        style={{
+          borderLeft: turnoComDuploCheck ? `3px solid ${corCheck(e.status_check)}` : 'none',
+          paddingLeft: turnoComDuploCheck ? 8 : 0,
+          opacity: e.origem === 'loja' ? 0.7 : 1,
+          cursor: e.origem === 'boy' ? 'pointer' : 'default'
+        }}>
+        <div>
+          <div style={{ fontWeight: 500, fontSize: 14 }}>
+            {e.cliente}
+            <span style={{ fontSize: 10, color: e.origem === 'loja' ? 'var(--yellow)' : 'var(--text-3)', marginLeft: 6 }}>
+              {e.origem === 'loja' ? 'loja' : 'você'}
+            </span>
+            {e.origem === 'boy' && (
+              <span style={{ fontSize: 10, color: 'var(--text-3)', marginLeft: 6 }}>· toque para editar</span>
             )}
-            {entregas.map(e => (
-              <div className="row" key={e.id} style={{
-                borderLeft: turnoComDuploCheck ? `3px solid ${corCheck(e.status_check)}` : 'none',
-                paddingLeft: turnoComDuploCheck ? 8 : 0,
-                opacity: e.origem === 'loja' ? 0.7 : 1
-              }}>
-                <div>
-                  <div style={{ fontWeight: 500, fontSize: 14 }}>
-                    {e.cliente}
-                    <span style={{ fontSize: 10, color: e.origem === 'loja' ? 'var(--yellow)' : 'var(--text-3)', marginLeft: 6 }}>
-                      {e.origem === 'loja' ? 'loja' : 'você'}
-                    </span>
-                  </div>
-                  <div className="muted">
-                    {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
-                    {e.created_at && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>{formatarHora(e.created_at)}</span>}
-                  </div>
-                  {turnoComDuploCheck && (
-                    <div style={{ fontSize: 10, color: corCheck(e.status_check), marginTop: 2 }}>
-                      {labelCheck(e.status_check)}
-                    </div>
-                  )}
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 15 }}>R${e.taxa.toFixed(2)}</div>
-                  <div className="muted-sm">{e.origem === 'loja' ? 'loja' : 'você'}</div>
-                </div>
-              </div>
-            ))}
-            <div className="divider" />
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
-              <span>Subtotal (minhas)</span><span>R${totalEntregas.toFixed(2)}</span>
-            </div>
-            {taxaFixa > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
-                <span>Taxa fixa do turno</span><span>R${taxaFixa.toFixed(2)}</span>
-              </div>
-            )}
-            <button className="btn btn-outline" onClick={() => setTela('relatorio')} style={{ marginTop: 8 }}>Ver relatório</button>
           </div>
-        )}
+          <div className="muted">
+            {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
+            {e.created_at && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>{formatarHora(e.created_at)}</span>}
+          </div>
+          {turnoComDuploCheck && (
+            <div style={{ fontSize: 10, color: corCheck(e.status_check), marginTop: 2 }}>
+              {labelCheck(e.status_check)}
+            </div>
+          )}
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 15 }}>R${e.taxa.toFixed(2)}</div>
+          <div className="muted-sm">{e.origem === 'loja' ? 'loja' : 'você'}</div>
+        </div>
+      </div>
+    ))}
+    <div className="divider" />
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
+      <span>Subtotal (minhas)</span><span>R${totalEntregas.toFixed(2)}</span>
+    </div>
+    {taxaFixa > 0 && (
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
+        <span>Taxa fixa do turno</span><span>R${taxaFixa.toFixed(2)}</span>
+      </div>
+    )}
+    <button className="btn btn-outline" onClick={() => setTela('relatorio')} style={{ marginTop: 8 }}>Ver relatório</button>
+  </div>
+)}
       </div>
     </div>
   )
