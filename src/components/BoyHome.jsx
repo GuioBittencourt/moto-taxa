@@ -440,6 +440,14 @@ export default function BoyHome({ perfil, onLogout }) {
                       await carregarHistorico(); setTela('relatorio')
                     }}>Fechar turno</button>
                   )}
+                  <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 11, color: 'var(--text-3)' }}
+                    onClick={async () => {
+                      const { data } = await supabase
+                        .from('turnos').select('*').eq('id', turnoAtivo.id).single()
+                      alert('fechamento_boy: ' + data?.fechamento_boy + ' | fechamento_loja: ' + data?.fechamento_loja + ' | status: ' + data?.status)
+                    }}>
+                    Debug turno
+                  </button>
                 </>
               )}
               <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
