@@ -31,11 +31,25 @@ function corCheck(status) {
   return 'var(--text-3)'
 }
 
-function labelCheck(status) {
-  if (status === 'verde') return '✓ Conferido'
-  if (status === 'amarelo') return '⚠ Divergência leve'
-  if (status === 'vermelho') return '✗ Divergência'
-  return '— Aguardando'
+function montarPares(entregas) {
+  const boys = entregas.filter(e => e.origem === 'boy')
+  const lojas = entregas.filter(e => e.origem === 'loja')
+  const pares = []
+  const lojasUsadas = new Set()
+
+  for (const boy of boys) {
+    const loja = boy.par_id ? lojas.find(l => l.id === boy.par_id) : null
+    if (loja) lojasUsadas.add(loja.id)
+    pares.push({ boy, loja: loja || null, status: boy.status_check })
+  }
+
+  for (const loja of lojas) {
+    if (!lojasUsadas.has(loja.id)) {
+      pares.push({ boy: null, loja, status: loja.status_check })
+    }
+  }
+
+  return pares
 }
 
 export default function LojaHome({ perfil, onLogout }) {
@@ -236,14 +250,14 @@ export default function LojaHome({ perfil, onLogout }) {
   )
 
   if ((tela === 'nova-entrega' || tela === 'editar-entrega') && turnoSelecionado) return (
-  <NovaEntrega
-    userId={turnoSelecionado.boy_id} estabelecimento={estabAtivo} turnoId={turnoSelecionado.id}
-    entregaExistente={tela === 'editar-entrega' ? entregaEditando : null}
-    origemOverride="loja"
-    onConfirmado={async () => { setEntregaEditando(null); await carregarEntregas(turnoSelecionado.id); setTela('home') }}
-    onVoltar={() => { setEntregaEditando(null); setTela('home') }}
-  />
-)
+    <NovaEntrega
+      userId={turnoSelecionado.boy_id} estabelecimento={estabAtivo} turnoId={turnoSelecionado.id}
+      entregaExistente={tela === 'editar-entrega' ? entregaEditando : null}
+      origemOverride="loja"
+      onConfirmado={async () => { setEntregaEditando(null); await carregarEntregas(turnoSelecionado.id); setTela('home') }}
+      onVoltar={() => { setEntregaEditando(null); setTela('home') }}
+    />
+  )
 
   if (tela === 'vinculos') return (
     <GerenciarVinculosLoja
@@ -347,52 +361,74 @@ export default function LojaHome({ perfil, onLogout }) {
             </div>
 
             {entregas.length > 0 && (
-  <div className="card">
-    <h2>Conferência de entregas</h2>
-    <p className="muted" style={{ marginBottom: 8, fontSize: 11 }}>
-      Verde = conferido · Amarelo = divergência leve · Vermelho = divergência
-    </p>
-    {entregas.map(e => (
-      <div className="row" key={e.id}
-        onClick={() => {
-          if (e.origem === 'loja') { setEntregaEditando(e); setTela('editar-entrega') }
-        }}
-        style={{
-          borderLeft: `3px solid ${corCheck(e.status_check)}`,
-          paddingLeft: 8,
-          opacity: e.origem === 'loja' ? 1 : 0.7,
-          cursor: e.origem === 'loja' ? 'pointer' : 'default'
-        }}>
-        <div>
-          <div style={{ fontWeight: 500, fontSize: 14 }}>
-            {e.cliente}
-            <span style={{ fontSize: 10, color: e.origem === 'loja' ? 'var(--yellow)' : 'var(--text-3)', marginLeft: 6 }}>
-              {e.origem === 'loja' ? 'loja' : 'boy'}
-            </span>
-            {e.origem === 'loja' && (
-              <span style={{ fontSize: 10, color: 'var(--text-3)', marginLeft: 6 }}>· toque para editar</span>
+              <div className="card">
+                <h2>Conferência de entregas</h2>
+                <p className="muted" style={{ marginBottom: 8, fontSize: 11 }}>
+                  Verde = conferido · Amarelo = divergência leve · Vermelho = divergência
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 6 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', paddingLeft: 4 }}>BOY</div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', paddingLeft: 4 }}>LOJA</div>
+                </div>
+
+                {montarPares(entregas).map((par, i) => (
+                  <div key={i} style={{
+                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 6,
+                    borderLeft: `3px solid ${corCheck(par.status)}`, paddingLeft: 6
+                  }}>
+                    {/* Coluna BOY — somente leitura */}
+                    <div style={{
+                      background: 'var(--bg-2)', borderRadius: 6, padding: '6px 8px',
+                      opacity: par.boy ? 0.75 : 0.35,
+                      minHeight: 54
+                    }}>
+                      {par.boy ? (
+                        <>
+                          <div style={{ fontWeight: 500, fontSize: 13 }}>{par.boy.cliente}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-2)' }}>
+                            {par.boy.km > 0 ? par.boy.km.toFixed(1) + ' km' : par.boy.bairro_destino}
+                          </div>
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>R${par.boy.taxa.toFixed(2)}</div>
+                        </>
+                      ) : (
+                        <div style={{ fontSize: 11, color: 'var(--text-3)', paddingTop: 8 }}>— não lançado</div>
+                      )}
+                    </div>
+                    {/* Coluna LOJA — clicável para editar */}
+                    <div
+                      onClick={() => { if (par.loja) { setEntregaEditando(par.loja); setTela('editar-entrega') } }}
+                      style={{
+                        background: 'var(--bg-2)', borderRadius: 6, padding: '6px 8px',
+                        cursor: par.loja ? 'pointer' : 'default',
+                        opacity: par.loja ? 1 : 0.35,
+                        minHeight: 54
+                      }}>
+                      {par.loja ? (
+                        <>
+                          <div style={{ fontWeight: 500, fontSize: 13 }}>{par.loja.cliente}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-2)' }}>
+                            {par.loja.km > 0 ? par.loja.km.toFixed(1) + ' km' : par.loja.bairro_destino}
+                          </div>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--yellow)' }}>
+                            R${par.loja.taxa.toFixed(2)}
+                          </div>
+                          <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 1 }}>toque para editar</div>
+                        </>
+                      ) : (
+                        <div style={{ fontSize: 11, color: 'var(--text-3)', paddingTop: 8 }}>— não lançado</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+
+                <div className="divider" />
+                <div className="total-bar">
+                  <div className="total-bar-lbl">Total (entregas boy)</div>
+                  <div className="total-bar-val">R${totalCusto.toFixed(2)}</div>
+                </div>
+              </div>
             )}
-          </div>
-          <div className="muted">
-            {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
-            {e.created_at && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>{formatarHora(e.created_at)}</span>}
-          </div>
-          <div style={{ fontSize: 10, color: corCheck(e.status_check), marginTop: 2 }}>
-            {labelCheck(e.status_check)}
-          </div>
-        </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontWeight: 600 }}>R${e.taxa.toFixed(2)}</div>
-        </div>
-      </div>
-    ))}
-    <div className="divider" />
-    <div className="total-bar">
-      <div className="total-bar-lbl">Total (entregas boy)</div>
-      <div className="total-bar-val">R${totalCusto.toFixed(2)}</div>
-    </div>
-  </div>
-)}
 
             <div className="card">
               <h2>Convidar motoboy</h2>
