@@ -67,24 +67,25 @@ export default function LojaHome({ perfil, onLogout }) {
   useEffect(() => { carregarDados() }, [])
 
   useEffect(() => {
-    if (!turnoSelecionado) return
-    let ativo = true
-    const poll = async () => {
-      while (ativo) {
+    if (!turnoSelecionado?.id) return
+    const id = turnoSelecionado.id
+    let rodando = true
+    ;(async () => {
+      while (rodando) {
         await new Promise(r => setTimeout(r, 5000))
-        if (!ativo) break
+        if (!rodando) break
         const { data } = await supabase
-          .from('turnos').select('*').eq('id', turnoSelecionado.id).single()
-        if (!data || !ativo) break
-        setTurnoSelecionado(data)
+          .from('turnos').select('*').eq('id', id).single()
+        if (!data || !rodando) break
+        setTurnoSelecionado(prev => ({ ...prev, ...data }))
         if (data.status === 'fechado') {
-          ativo = false
+          rodando = false
           await carregarTurnos(estabAtivo.id)
+          break
         }
       }
-    }
-    poll()
-    return () => { ativo = false }
+    })()
+    return () => { rodando = false }
   }, [turnoSelecionado?.id])
 
   async function detectarECriarSolicitacoes(estab) {
