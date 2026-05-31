@@ -69,6 +69,28 @@ export default function LojaHome({ perfil, onLogout }) {
 
   useEffect(() => { carregarDados() }, [])
 
+  useEffect(() => {
+  if (!turnoSelecionado) return
+
+  const canal = supabase
+    .channel('turno-loja-' + turnoSelecionado.id)
+    .on('postgres_changes', {
+      event: 'UPDATE',
+      schema: 'public',
+      table: 'turnos',
+      filter: `id=eq.${turnoSelecionado.id}`
+    }, async (payload) => {
+      const t = payload.new
+      setTurnoSelecionado(t)
+      if (t.status === 'fechado') {
+        await carregarTurnos(estabAtivo.id)
+      }
+    })
+    .subscribe()
+
+  return () => { supabase.removeChannel(canal) }
+}, [turnoSelecionado?.id])
+
   async function detectarECriarSolicitacoes(estab) {
     const { data: perfisBoy } = await supabase
       .from('profiles').select('id').eq('tipo', 'boy')
