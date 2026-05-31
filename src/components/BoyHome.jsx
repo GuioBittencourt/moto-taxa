@@ -43,19 +43,16 @@ function montarPares(entregas) {
   const lojas = entregas.filter(e => e.origem === 'loja')
   const pares = []
   const lojasUsadas = new Set()
-
   for (const boy of boys) {
     const loja = boy.par_id ? lojas.find(l => l.id === boy.par_id) : null
     if (loja) lojasUsadas.add(loja.id)
     pares.push({ boy, loja: loja || null, status: boy.status_check })
   }
-
   for (const loja of lojas) {
     if (!lojasUsadas.has(loja.id)) {
       pares.push({ boy: null, loja, status: loja.status_check })
     }
   }
-
   return pares
 }
 
@@ -79,18 +76,24 @@ export default function BoyHome({ perfil, onLogout }) {
 
   useEffect(() => {
     if (!turnoAtivo) return
-    const intervalo = setInterval(async () => {
-      const { data } = await supabase
-        .from('turnos').select('*').eq('id', turnoAtivo.id).single()
-      if (!data) return
-      setTurnoAtivo(data)
-      if (data.status === 'fechado') {
-        clearInterval(intervalo)
-        await carregarHistorico()
-        setTela('relatorio')
+    let ativo = true
+    const poll = async () => {
+      while (ativo) {
+        await new Promise(r => setTimeout(r, 5000))
+        if (!ativo) break
+        const { data } = await supabase
+          .from('turnos').select('*').eq('id', turnoAtivo.id).single()
+        if (!data || !ativo) break
+        setTurnoAtivo(data)
+        if (data.status === 'fechado') {
+          ativo = false
+          await carregarHistorico()
+          setTela('relatorio')
+        }
       }
-    }, 5000)
-    return () => clearInterval(intervalo)
+    }
+    poll()
+    return () => { ativo = false }
   }, [turnoAtivo?.id])
 
   async function detectarLojas(estabs) {

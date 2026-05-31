@@ -36,19 +36,16 @@ function montarPares(entregas) {
   const lojas = entregas.filter(e => e.origem === 'loja')
   const pares = []
   const lojasUsadas = new Set()
-
   for (const boy of boys) {
     const loja = boy.par_id ? lojas.find(l => l.id === boy.par_id) : null
     if (loja) lojasUsadas.add(loja.id)
     pares.push({ boy, loja: loja || null, status: boy.status_check })
   }
-
   for (const loja of lojas) {
     if (!lojasUsadas.has(loja.id)) {
       pares.push({ boy: null, loja, status: loja.status_check })
     }
   }
-
   return pares
 }
 
@@ -71,17 +68,23 @@ export default function LojaHome({ perfil, onLogout }) {
 
   useEffect(() => {
     if (!turnoSelecionado) return
-    const intervalo = setInterval(async () => {
-      const { data } = await supabase
-        .from('turnos').select('*').eq('id', turnoSelecionado.id).single()
-      if (!data) return
-      setTurnoSelecionado(data)
-      if (data.status === 'fechado') {
-        clearInterval(intervalo)
-        await carregarTurnos(estabAtivo.id)
+    let ativo = true
+    const poll = async () => {
+      while (ativo) {
+        await new Promise(r => setTimeout(r, 5000))
+        if (!ativo) break
+        const { data } = await supabase
+          .from('turnos').select('*').eq('id', turnoSelecionado.id).single()
+        if (!data || !ativo) break
+        setTurnoSelecionado(data)
+        if (data.status === 'fechado') {
+          ativo = false
+          await carregarTurnos(estabAtivo.id)
+        }
       }
-    }, 5000)
-    return () => clearInterval(intervalo)
+    }
+    poll()
+    return () => { ativo = false }
   }, [turnoSelecionado?.id])
 
   async function detectarECriarSolicitacoes(estab) {
