@@ -78,55 +78,20 @@ export default function BoyHome({ perfil, onLogout }) {
   useEffect(() => { carregarDados() }, [])
 
   useEffect(() => {
-  if (!turnoAtivo) return
-
-  console.log('Realtime inscrito no turno:', turnoAtivo.id)
-
-  const canal = supabase
-    .channel('turno-boy-' + turnoAtivo.id)
-    .on('postgres_changes', {
-      event: 'UPDATE',
-      schema: 'public',
-      table: 'turnos',
-      filter: `id=eq.${turnoAtivo.id}`
-    }, async (payload) => {
-      console.log('Realtime recebeu update:', payload.new)
-      const t = payload.new
-      setTurnoAtivo(t)
-      if (t.status === 'fechado') {
+    if (!turnoAtivo) return
+    const intervalo = setInterval(async () => {
+      const { data } = await supabase
+        .from('turnos').select('*').eq('id', turnoAtivo.id).single()
+      if (!data) return
+      setTurnoAtivo(data)
+      if (data.status === 'fechado') {
+        clearInterval(intervalo)
         await carregarHistorico()
         setTela('relatorio')
       }
-    })
-    .subscribe((status) => {
-      console.log('Status da inscrição:', status)
-    })
-
-  return () => { supabase.removeChannel(canal) }
-}, [turnoAtivo?.id])
-
-  useEffect(() => {
-  if (!turnoAtivo) return
-
-  const canal = supabase
-    .channel('turno-boy-' + turnoAtivo.id)
-    .on('postgres_changes', {
-      event: 'UPDATE',
-      schema: 'public',
-      table: 'turnos',
-      filter: `id=eq.${turnoAtivo.id}`
-    }, async (payload) => {
-      const t = payload.new
-      setTurnoAtivo(t)
-      if (t.status === 'fechado') {
-        await carregarHistorico()
-        setTela('relatorio')
-      }
-    })
-    .subscribe()
-
-  return () => { supabase.removeChannel(canal) }
-}, [turnoAtivo?.id])
+    }, 5000)
+    return () => clearInterval(intervalo)
+  }, [turnoAtivo?.id])
 
   async function detectarLojas(estabs) {
     const { data: perfisLoja } = await supabase
@@ -153,7 +118,7 @@ export default function BoyHome({ perfil, onLogout }) {
     }
   }
 
-    async function carregarDados() {
+  async function carregarDados() {
     setLoading(true)
     const { data: estabs } = await supabase
       .from('estabelecimentos').select('*').eq('criado_por', perfil.id)
@@ -495,7 +460,6 @@ export default function BoyHome({ perfil, onLogout }) {
         {entregas.length > 0 && (
           <div className="card">
             <h2>Entregas do turno</h2>
-
             {turnoComDuploCheck ? (
               <>
                 <p className="muted" style={{ marginBottom: 8, fontSize: 11 }}>
@@ -510,14 +474,12 @@ export default function BoyHome({ perfil, onLogout }) {
                     display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 6,
                     borderLeft: `3px solid ${corCheck(par.status)}`, paddingLeft: 6
                   }}>
-                    {/* Coluna BOY — clicável para editar */}
                     <div
                       onClick={() => { if (par.boy) { setEntregaEditando(par.boy); setTela('editar-entrega') } }}
                       style={{
                         background: 'var(--bg-2)', borderRadius: 6, padding: '6px 8px',
                         cursor: par.boy ? 'pointer' : 'default',
-                        opacity: par.boy ? 1 : 0.35,
-                        minHeight: 54
+                        opacity: par.boy ? 1 : 0.35, minHeight: 54
                       }}>
                       {par.boy ? (
                         <>
@@ -525,20 +487,16 @@ export default function BoyHome({ perfil, onLogout }) {
                           <div style={{ fontSize: 11, color: 'var(--text-2)' }}>
                             {par.boy.km > 0 ? par.boy.km.toFixed(1) + ' km' : par.boy.bairro_destino}
                           </div>
-                          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--yellow)' }}>
-                            R${par.boy.taxa.toFixed(2)}
-                          </div>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--yellow)' }}>R${par.boy.taxa.toFixed(2)}</div>
                           <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 1 }}>toque para editar</div>
                         </>
                       ) : (
                         <div style={{ fontSize: 11, color: 'var(--text-3)', paddingTop: 8 }}>— não lançado</div>
                       )}
                     </div>
-                    {/* Coluna LOJA — somente leitura */}
                     <div style={{
                       background: 'var(--bg-2)', borderRadius: 6, padding: '6px 8px',
-                      opacity: par.loja ? 0.75 : 0.35,
-                      minHeight: 54
+                      opacity: par.loja ? 0.75 : 0.35, minHeight: 54
                     }}>
                       {par.loja ? (
                         <>
@@ -556,7 +514,6 @@ export default function BoyHome({ perfil, onLogout }) {
                 ))}
               </>
             ) : (
-              // Sem vínculo ativo — lista simples
               entregas.map(e => (
                 <div className="row" key={e.id}
                   onClick={() => { if (e.origem === 'boy') { setEntregaEditando(e); setTela('editar-entrega') } }}
@@ -569,7 +526,6 @@ export default function BoyHome({ perfil, onLogout }) {
                 </div>
               ))
             )}
-
             <div className="divider" />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 6 }}>
               <span>Subtotal (minhas)</span><span>R${totalEntregas.toFixed(2)}</span>

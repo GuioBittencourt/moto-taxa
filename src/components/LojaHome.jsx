@@ -70,26 +70,19 @@ export default function LojaHome({ perfil, onLogout }) {
   useEffect(() => { carregarDados() }, [])
 
   useEffect(() => {
-  if (!turnoSelecionado) return
-
-  const canal = supabase
-    .channel('turno-loja-' + turnoSelecionado.id)
-    .on('postgres_changes', {
-      event: 'UPDATE',
-      schema: 'public',
-      table: 'turnos',
-      filter: `id=eq.${turnoSelecionado.id}`
-    }, async (payload) => {
-      const t = payload.new
-      setTurnoSelecionado(t)
-      if (t.status === 'fechado') {
+    if (!turnoSelecionado) return
+    const intervalo = setInterval(async () => {
+      const { data } = await supabase
+        .from('turnos').select('*').eq('id', turnoSelecionado.id).single()
+      if (!data) return
+      setTurnoSelecionado(data)
+      if (data.status === 'fechado') {
+        clearInterval(intervalo)
         await carregarTurnos(estabAtivo.id)
       }
-    })
-    .subscribe()
-
-  return () => { supabase.removeChannel(canal) }
-}, [turnoSelecionado?.id])
+    }, 5000)
+    return () => clearInterval(intervalo)
+  }, [turnoSelecionado?.id])
 
   async function detectarECriarSolicitacoes(estab) {
     const { data: perfisBoy } = await supabase
@@ -388,22 +381,18 @@ export default function LojaHome({ perfil, onLogout }) {
                 <p className="muted" style={{ marginBottom: 8, fontSize: 11 }}>
                   Verde = conferido · Amarelo = divergência leve · Vermelho = divergência
                 </p>
-
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 6 }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', paddingLeft: 4 }}>BOY</div>
                   <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', paddingLeft: 4 }}>LOJA</div>
                 </div>
-
                 {montarPares(entregas).map((par, i) => (
                   <div key={i} style={{
                     display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 6,
                     borderLeft: `3px solid ${corCheck(par.status)}`, paddingLeft: 6
                   }}>
-                    {/* Coluna BOY — somente leitura */}
                     <div style={{
                       background: 'var(--bg-2)', borderRadius: 6, padding: '6px 8px',
-                      opacity: par.boy ? 0.75 : 0.35,
-                      minHeight: 54
+                      opacity: par.boy ? 0.75 : 0.35, minHeight: 54
                     }}>
                       {par.boy ? (
                         <>
@@ -417,14 +406,12 @@ export default function LojaHome({ perfil, onLogout }) {
                         <div style={{ fontSize: 11, color: 'var(--text-3)', paddingTop: 8 }}>— não lançado</div>
                       )}
                     </div>
-                    {/* Coluna LOJA — clicável para editar */}
                     <div
                       onClick={() => { if (par.loja) { setEntregaEditando(par.loja); setTela('editar-entrega') } }}
                       style={{
                         background: 'var(--bg-2)', borderRadius: 6, padding: '6px 8px',
                         cursor: par.loja ? 'pointer' : 'default',
-                        opacity: par.loja ? 1 : 0.35,
-                        minHeight: 54
+                        opacity: par.loja ? 1 : 0.35, minHeight: 54
                       }}>
                       {par.loja ? (
                         <>
@@ -432,9 +419,7 @@ export default function LojaHome({ perfil, onLogout }) {
                           <div style={{ fontSize: 11, color: 'var(--text-2)' }}>
                             {par.loja.km > 0 ? par.loja.km.toFixed(1) + ' km' : par.loja.bairro_destino}
                           </div>
-                          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--yellow)' }}>
-                            R${par.loja.taxa.toFixed(2)}
-                          </div>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--yellow)' }}>R${par.loja.taxa.toFixed(2)}</div>
                           <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 1 }}>toque para editar</div>
                         </>
                       ) : (
@@ -443,7 +428,6 @@ export default function LojaHome({ perfil, onLogout }) {
                     </div>
                   </div>
                 ))}
-
                 <div className="divider" />
                 <div className="total-bar">
                   <div className="total-bar-lbl">Total (entregas boy)</div>
