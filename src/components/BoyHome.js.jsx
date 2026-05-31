@@ -80,6 +80,34 @@ export default function BoyHome({ perfil, onLogout }) {
   useEffect(() => {
   if (!turnoAtivo) return
 
+  console.log('Realtime inscrito no turno:', turnoAtivo.id)
+
+  const canal = supabase
+    .channel('turno-boy-' + turnoAtivo.id)
+    .on('postgres_changes', {
+      event: 'UPDATE',
+      schema: 'public',
+      table: 'turnos',
+      filter: `id=eq.${turnoAtivo.id}`
+    }, async (payload) => {
+      console.log('Realtime recebeu update:', payload.new)
+      const t = payload.new
+      setTurnoAtivo(t)
+      if (t.status === 'fechado') {
+        await carregarHistorico()
+        setTela('relatorio')
+      }
+    })
+    .subscribe((status) => {
+      console.log('Status da inscrição:', status)
+    })
+
+  return () => { supabase.removeChannel(canal) }
+}, [turnoAtivo?.id])
+
+  useEffect(() => {
+  if (!turnoAtivo) return
+
   const canal = supabase
     .channel('turno-boy-' + turnoAtivo.id)
     .on('postgres_changes', {
