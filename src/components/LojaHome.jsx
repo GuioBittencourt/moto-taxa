@@ -204,32 +204,33 @@ export default function LojaHome({ perfil, onLogout }) {
   }
 
   async function solicitarFechamento() {
-    if (!turnoSelecionado) return
-    setSolicitandoFechamento(true)
+  alert('turnoSelecionado.id: ' + turnoSelecionado?.id + ' | fechamento_loja: ' + turnoSelecionado?.fechamento_loja)
+  if (!turnoSelecionado) return
+  setSolicitandoFechamento(true)
 
-    const { data: ents } = await supabase
-      .from('entregas').select('*').eq('turno_id', turnoSelecionado.id)
-    const temVermelho = (ents || []).some(e => e.status_check === 'vermelho')
-    if (temVermelho) {
-      alert('Ainda há divergências em vermelho. Corrija antes de fechar.')
-      setSolicitandoFechamento(false)
-      return
-    }
-
-    await supabase.from('turnos').update({ fechamento_loja: true }).eq('id', turnoSelecionado.id)
-    const { data: turnoAtualizado } = await supabase
-      .from('turnos').select('*, profiles(nome)').eq('id', turnoSelecionado.id).single()
-
-    if (turnoAtualizado) setTurnoSelecionado(turnoAtualizado)
-
-    if (turnoAtualizado?.fechamento_boy) {
-      await supabase.from('turnos').update({
-        status: 'fechado', fim: new Date().toISOString()
-      }).eq('id', turnoSelecionado.id)
-      await carregarTurnos(estabAtivo.id)
-    }
+  const { data: ents } = await supabase
+    .from('entregas').select('*').eq('turno_id', turnoSelecionado.id)
+  const temVermelho = (ents || []).some(e => e.status_check === 'vermelho')
+  if (temVermelho) {
+    alert('Ainda há divergências em vermelho. Corrija antes de fechar.')
     setSolicitandoFechamento(false)
+    return
   }
+
+  await supabase.from('turnos').update({ fechamento_loja: true }).eq('id', turnoSelecionado.id)
+  const { data: turnoAtualizado } = await supabase
+    .from('turnos').select('*, profiles(nome)').eq('id', turnoSelecionado.id).single()
+
+  if (turnoAtualizado) setTurnoSelecionado(turnoAtualizado)
+
+  if (turnoAtualizado?.fechamento_boy) {
+    await supabase.from('turnos').update({
+      status: 'fechado', fim: new Date().toISOString()
+    }).eq('id', turnoSelecionado.id)
+    await carregarTurnos(estabAtivo.id)
+  }
+  setSolicitandoFechamento(false)
+}
 
   function formatarHora(ts) {
     if (!ts) return ''
