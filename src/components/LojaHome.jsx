@@ -75,7 +75,7 @@ export default function LojaHome({ perfil, onLogout }) {
         await new Promise(r => setTimeout(r, 5000))
         if (!rodando) break
         const { data } = await supabase
-          .from('turnos').select('*').eq('id', id).single()
+          .from('turnos').select('*, profiles(nome)').eq('id', id).single()
         if (!data || !rodando) break
         setTurnoSelecionado(prev => ({ ...prev, ...data }))
         if (data.status === 'fechado') {
@@ -218,10 +218,11 @@ export default function LojaHome({ perfil, onLogout }) {
 
     await supabase.from('turnos').update({ fechamento_loja: true }).eq('id', turnoSelecionado.id)
     const { data: turnoAtualizado } = await supabase
-      .from('turnos').select('*').eq('id', turnoSelecionado.id).single()
-    setTurnoSelecionado(turnoAtualizado)
+      .from('turnos').select('*, profiles(nome)').eq('id', turnoSelecionado.id).single()
 
-    if (turnoAtualizado.fechamento_boy) {
+    if (turnoAtualizado) setTurnoSelecionado(turnoAtualizado)
+
+    if (turnoAtualizado?.fechamento_boy) {
       await supabase.from('turnos').update({
         status: 'fechado', fim: new Date().toISOString()
       }).eq('id', turnoSelecionado.id)
