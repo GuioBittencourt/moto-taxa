@@ -54,30 +54,35 @@ export default function LojaHome({ perfil, onLogout }) {
   const [estabelecimentos, setEstabelecimentos] = useState([])
   const [estabAtivo, setEstabAtivo] = useState(null)
   const [estabEditando, setEstabEditando] = useState(null)
-  const [turnosAtivos, setTurnosAtivos] = useState([])
-  const [turnoSelecionado, setTurnoSelecionado] = useState(null)
+  const [turnos, setTurnos] = useState([])
+  const [turnoAtivo, setTurnoAtivo] = useState(null)
   const [entregas, setEntregas] = useState([])
   const [vinculos, setVinculos] = useState([])
+  const [historicoTurnos, setHistoricoTurnos] = useState([])
   const [linkConvite, setLinkConvite] = useState('')
   const [gerandoLink, setGerandoLink] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [solicitandoFechamento, setSolicitandoFechamento] = useState(false)
+  const [fechando, setFechando] = useState(false)
   const [entregaEditando, setEntregaEditando] = useState(null)
+  const [abrindoTurno, setAbrindoTurno] = useState(false)
+  const [nomeTurno, setNomeTurno] = useState('')
+  const [turnoRelatorio, setTurnoRelatorio] = useState(null)
+  const [entregasRelatorio, setEntregasRelatorio] = useState([])
 
   useEffect(() => { carregarDados() }, [])
 
   useEffect(() => {
-    if (!turnoSelecionado?.id) return
-    const id = turnoSelecionado.id
+    if (!turnoAtivo?.id) return
+    const id = turnoAtivo.id
     let rodando = true
     ;(async () => {
       while (rodando) {
         await new Promise(r => setTimeout(r, 5000))
         if (!rodando) break
         const { data } = await supabase
-          .from('turnos').select('*, profiles(nome)').eq('id', id).single()
+          .from('turnos').select('*').eq('id', id).single()
         if (!data || !rodando) break
-        setTurnoSelecionado(prev => ({ ...prev, ...data }))
+        setTurnoAtivo(prev => ({ ...prev, ...data }))
         if (data.status === 'fechado') {
           rodando = false
           await carregarTurnos(estabAtivo.id)
@@ -86,7 +91,7 @@ export default function LojaHome({ perfil, onLogout }) {
       }
     })()
     return () => { rodando = false }
-  }, [turnoSelecionado?.id])
+  }, [turnoAtivo?.id])
 
   async function detectarECriarSolicitacoes(estab) {
     const { data: perfisBoy } = await supabase
@@ -120,33 +125,51 @@ export default function LojaHome({ perfil, onLogout }) {
       setEstabAtivo(estabs[0])
       await carregarVinculos(estabs[0].id)
       await carregarTurnos(estabs[0].id)
+      await carregarHistorico(estabs[0].id)
       await detectarECriarSolicitacoes(estabs[0])
     }
     setLoading(false)
   }
 
   async function carregarTurnos(estabId) {
+    // Turnos próprios da loja (boy_id = perfil da loja, via nome_turno)
+    const { data: turnosLoja } = await supabase
+      .from('turnos').select('*')
+      .eq('estab_id', estabId)
+      .eq('boy_id', perfil.id)
+      .eq('status', 'aberto')
+      .order('created_at', { ascending: false })
+
+    // Turnos de boys vinculados
     const { data: vincs } = await supabase
       .from('vinculos').select('boy_id')
       .eq('estab_id', estabId).eq('ativo', true)
       .eq('aceito_boy', true).eq('aceito_loja', true)
     const boyIds = (vincs || []).map(v => v.boy_id)
 
-    if (boyIds.length === 0) { setTurnosAtivos([]); setEntregas([]); return }
-
-    const { data: turnos } = await supabase
-      .from('turnos').select('*, profiles(nome)')
-      .in('boy_id', boyIds).eq('status', 'aberto')
-      .order('created_at', { ascending: false })
-    setTurnosAtivos(turnos || [])
-
-    if ((turnos || []).length > 0) {
-      setTurnoSelecionado(turnos[0])
-      await carregarEntregas(turnos[0].id)
-    } else {
-      setTurnoSelecionado(null)
-      setEntregas([])
+    let turnosBoy = []
+    if (boyIds.length > 0) {
+      const { data } = await supabase
+        .from('turnos').select('*, profiles(nome)')
+        .in('boy_id', boyIds).eq('status', 'aberto')
+        .order('created_at', { ascending: false })
+      turnosBoy = data || []
     }
+
+    const todos = [...(turnosLoja || []), ...turnosBoy]
+    setTurnos(todos)
+  }
+
+  async function carregarHistorico(estabId) {
+    const id = estabId || estabAtivo?.id
+    if (!id) return
+    const { data } = await supabase
+      .from('turnos').select('*')
+      .eq('estab_id', id)
+      .eq('status', 'fechado')
+      .order('created_at', { ascending: false })
+      .limit(30)
+    setHistoricoTurnos(data || [])
   }
 
   async function carregarEntregas(turnoId) {
@@ -162,6 +185,70 @@ export default function LojaHome({ perfil, onLogout }) {
       .from('vinculos').select('*, profiles(nome, email)')
       .eq('estab_id', estabId)
     setVinculos(data || [])
+  }
+
+  async function abrirTurno() {
+    if (!nomeTurno.trim()) return
+    const hoje = new Date().toISOString().split('T')[0]
+    const { data } = await supabase.from('turnos').insert({
+      boy_id: perfil.id,
+      estab_id: estabAtivo.id,
+      data: hoje,
+      inicio: new Date().toISOString(),
+      taxa_fixa_turno: estabAtivo.taxa_fixa_turno || 0,
+      status: 'aberto',
+      fechamento_boy: false,
+      fechamento_loja: false,
+      nome_turno: nomeTurno.trim()
+    }).select().single()
+    setNomeTurno('')
+    setAbrindoTurno(false)
+    await carregarTurnos(estabAtivo.id)
+    if (data) { setTurnoAtivo(data); await carregarEntregas(data.id); setTela('turno') }
+  }
+
+  async function fecharTurno() {
+    if (!turnoAtivo) return
+    setFechando(true)
+    const isTurnoLoja = turnoAtivo.boy_id === perfil.id
+
+    if (isTurnoLoja) {
+      // Turno próprio da loja — fecha direto
+      await supabase.from('turnos').update({
+        status: 'fechado', fim: new Date().toISOString()
+      }).eq('id', turnoAtivo.id)
+      const { data: ents } = await supabase.from('entregas').select('*').eq('turno_id', turnoAtivo.id)
+      setTurnoRelatorio(turnoAtivo)
+      setEntregasRelatorio(ents || [])
+      await carregarTurnos(estabAtivo.id)
+      await carregarHistorico(estabAtivo.id)
+      setFechando(false)
+      setTela('relatorio')
+      return
+    }
+
+    // Turno de boy vinculado — duplo check
+    const { data: ents } = await supabase.from('entregas').select('*').eq('turno_id', turnoAtivo.id)
+    const temVermelho = (ents || []).some(e => e.status_check === 'vermelho')
+    if (temVermelho) {
+      alert('Ainda há divergências em vermelho. Corrija antes de fechar.')
+      setFechando(false)
+      return
+    }
+
+    await supabase.from('turnos').update({ fechamento_loja: true }).eq('id', turnoAtivo.id)
+    const { data: turnoAtualizado } = await supabase
+      .from('turnos').select('*').eq('id', turnoAtivo.id).single()
+    if (turnoAtualizado) setTurnoAtivo(prev => ({ ...prev, ...turnoAtualizado }))
+
+    if (turnoAtualizado?.fechamento_boy) {
+      await supabase.from('turnos').update({
+        status: 'fechado', fim: new Date().toISOString()
+      }).eq('id', turnoAtivo.id)
+      await carregarTurnos(estabAtivo.id)
+      await carregarHistorico(estabAtivo.id)
+    }
+    setFechando(false)
   }
 
   async function gerarLinkConvite() {
@@ -203,34 +290,15 @@ export default function LojaHome({ perfil, onLogout }) {
     await carregarTurnos(estabAtivo.id)
   }
 
-  async function solicitarFechamento() {
-  alert('turnoSelecionado.id: ' + turnoSelecionado?.id + ' | fechamento_loja: ' + turnoSelecionado?.fechamento_loja)
-  if (!turnoSelecionado) return
-  setSolicitandoFechamento(true)
-
-  const { data: ents } = await supabase
-    .from('entregas').select('*').eq('turno_id', turnoSelecionado.id)
-  const temVermelho = (ents || []).some(e => e.status_check === 'vermelho')
-  if (temVermelho) {
-    alert('Ainda há divergências em vermelho. Corrija antes de fechar.')
-    setSolicitandoFechamento(false)
-    return
+  function nomeTurnoDisplay(turno) {
+    if (turno.nome_turno) return turno.nome_turno
+    if (turno.profiles?.nome) return turno.profiles.nome
+    return 'Motoboy'
   }
 
-  await supabase.from('turnos').update({ fechamento_loja: true }).eq('id', turnoSelecionado.id)
-  const { data: turnoAtualizado } = await supabase
-    .from('turnos').select('*, profiles(nome)').eq('id', turnoSelecionado.id).single()
-
-  if (turnoAtualizado) setTurnoSelecionado(turnoAtualizado)
-
-  if (turnoAtualizado?.fechamento_boy) {
-    await supabase.from('turnos').update({
-      status: 'fechado', fim: new Date().toISOString()
-    }).eq('id', turnoSelecionado.id)
-    await carregarTurnos(estabAtivo.id)
+  function isTurnoLoja(turno) {
+    return turno.boy_id === perfil.id
   }
-  setSolicitandoFechamento(false)
-}
 
   function formatarHora(ts) {
     if (!ts) return ''
@@ -244,9 +312,13 @@ export default function LojaHome({ perfil, onLogout }) {
 
   const vincPendentes = vinculos.filter(v => v.ativo && v.aceito_boy && !v.aceito_loja)
   const vincAtivos = vinculos.filter(v => v.ativo && v.aceito_boy && v.aceito_loja)
+  const entregasLoja = entregas.filter(e => e.origem === 'loja')
   const entregasBoy = entregas.filter(e => e.origem === 'boy')
-  const totalCusto = entregasBoy.reduce((s, e) => s + e.taxa, 0)
+  const totalCusto = turnoAtivo && isTurnoLoja(turnoAtivo)
+    ? entregasLoja.reduce((s, e) => s + e.taxa, 0)
+    : entregasBoy.reduce((s, e) => s + e.taxa, 0)
   const temVermelho = entregas.some(e => e.status_check === 'vermelho')
+  const turnoComDuploCheck = turnoAtivo && !isTurnoLoja(turnoAtivo)
 
   if (tela === 'add-estab') return (
     <CadastroEstabelecimento
@@ -270,13 +342,54 @@ export default function LojaHome({ perfil, onLogout }) {
     />
   )
 
-  if ((tela === 'nova-entrega' || tela === 'editar-entrega') && turnoSelecionado) return (
+  if ((tela === 'nova-entrega' || tela === 'editar-entrega') && turnoAtivo) return (
     <NovaEntrega
-      userId={turnoSelecionado.boy_id} estabelecimento={estabAtivo} turnoId={turnoSelecionado.id}
+      userId={isTurnoLoja(turnoAtivo) ? perfil.id : turnoAtivo.boy_id}
+      estabelecimento={estabAtivo}
+      turnoId={turnoAtivo.id}
       entregaExistente={tela === 'editar-entrega' ? entregaEditando : null}
       origemOverride="loja"
-      onConfirmado={async () => { setEntregaEditando(null); await carregarEntregas(turnoSelecionado.id); setTela('home') }}
-      onVoltar={() => { setEntregaEditando(null); setTela('home') }}
+      onConfirmado={async () => { setEntregaEditando(null); await carregarEntregas(turnoAtivo.id); setTela('turno') }}
+      onVoltar={() => { setEntregaEditando(null); setTela('turno') }}
+    />
+  )
+
+  if (tela === 'relatorio') return (
+    <Relatorio
+      turno={turnoRelatorio} estabelecimento={estabAtivo}
+      entregas={entregasRelatorio}
+      onVoltar={() => { setTurnoAtivo(null); setEntregas([]); setTela('home') }}
+      formatarHora={formatarHora} formatarData={formatarData}
+    />
+  )
+
+  if (tela === 'relatorio-historico') return (
+    <Relatorio
+      turno={turnoRelatorio} estabelecimento={estabAtivo}
+      entregas={entregasRelatorio}
+      onVoltar={() => setTela('historico')}
+      formatarHora={formatarHora} formatarData={formatarData}
+    />
+  )
+
+  if (tela === 'historico') return (
+    <Historico
+      turnos={historicoTurnos}
+      onVoltar={() => setTela('home')}
+      onVerRelatorio={async (turno) => {
+        const { data } = await supabase.from('entregas').select('*')
+          .eq('turno_id', turno.id).order('created_at', { ascending: true })
+        setTurnoRelatorio(turno)
+        setEntregasRelatorio(data || [])
+        setTela('relatorio-historico')
+      }}
+      onApagarTurno={async (turnoId) => {
+        await supabase.from('entregas').delete().eq('turno_id', turnoId)
+        await supabase.from('turnos').delete().eq('id', turnoId)
+        await carregarHistorico(estabAtivo.id)
+      }}
+      nomeTurnoDisplay={nomeTurnoDisplay}
+      formatarData={formatarData} formatarHora={formatarHora}
     />
   )
 
@@ -287,106 +400,64 @@ export default function LojaHome({ perfil, onLogout }) {
       onVoltar={() => setTela('home')} />
   )
 
-  return (
+  if (tela === 'turno' && turnoAtivo) return (
     <div>
-      <div style={{ position: 'relative', width: '100%', height: 110, overflow: 'hidden', background: '#000' }}>
-        <img src="/logo-horizontal.png" alt="MotoTaxa"
-          style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', opacity: 0.92 }} />
-        <div style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0,
-          display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
-          padding: '0 1rem 10px', background: 'linear-gradient(transparent, rgba(0,0,0,0.75))'
-        }}>
-          <div>
-            <span className="badge badge-loja">Estabelecimento</span>
-            <div style={{ color: '#fff', fontWeight: 600, fontSize: 15, marginTop: 2 }}>{estabAtivo?.nome || perfil.nome}</div>
-          </div>
-          <button className="btn btn-sm btn-outline" onClick={onLogout}
-            style={{ marginTop: 0, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}>Sair</button>
-        </div>
-      </div>
-
       <div style={{ padding: '0 1rem' }}>
-        <div style={{ height: 12 }} />
+        <div className="header" style={{ padding: '1rem 0 0.75rem' }}>
+          <button className="back-btn" onClick={() => { setTurnoAtivo(null); setEntregas([]); setTela('home') }}>←</button>
+          <h1>{nomeTurnoDisplay(turnoAtivo)}</h1>
+        </div>
 
-        {vincPendentes.length > 0 && (
-          <div className="alert alert-info" style={{ marginBottom: 12, cursor: 'pointer' }}
-            onClick={() => setTela('vinculos')}>
-            <strong>🔗 {vincPendentes.length} motoboy{vincPendentes.length > 1 ? 's' : ''} aguardando aprovação</strong>
-            <div style={{ fontSize: 12, marginTop: 2 }}>Toque para ver e aprovar</div>
+        <div className="grid2">
+          <div className="metric">
+            <div className="metric-val yellow">R${totalCusto.toFixed(2)}</div>
+            <div className="metric-lbl">Total do turno</div>
           </div>
-        )}
+          <div className="metric">
+            <div className="metric-val">{entregas.filter(e => isTurnoLoja(turnoAtivo) ? e.origem === 'loja' : e.origem === 'boy').length}</div>
+            <div className="metric-lbl">Entregas</div>
+          </div>
+        </div>
 
-        {estabelecimentos.length === 0 ? (
-          <div className="card">
-            <p className="muted" style={{ marginBottom: 12 }}>Configure seu estabelecimento para começar.</p>
-            <button className="btn btn-primary" onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
-              + Configurar estabelecimento
+        <div className="card">
+          <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 8 }}>
+            Iniciado em {formatarData(turnoAtivo.inicio)} às {formatarHora(turnoAtivo.inicio)}
+            {isTurnoLoja(turnoAtivo) && <span style={{ marginLeft: 8, color: 'var(--yellow)', fontSize: 11 }}>· turno da loja</span>}
+          </div>
+          <button className="btn btn-primary" onClick={() => setTela('nova-entrega')} style={{ marginBottom: 4 }}>
+            + Registrar entrega
+          </button>
+
+          {isTurnoLoja(turnoAtivo) ? (
+            <button className="btn btn-outline" onClick={fecharTurno} disabled={fechando} style={{ marginTop: 4 }}>
+              {fechando ? <><span className="spinner"></span>Fechando...</> : 'Fechar turno'}
             </button>
-          </div>
-        ) : (
-          <>
-            <div className="grid2">
-              <div className="metric">
-                <div className="metric-val yellow">R${totalCusto.toFixed(2)}</div>
-                <div className="metric-lbl">Custo do turno</div>
+          ) : (
+            turnoAtivo.fechamento_loja ? (
+              <div className="alert alert-info" style={{ marginTop: 8 }}>
+                Aguardando confirmação do motoboy para fechar.
               </div>
-              <div className="metric">
-                <div className="metric-val">{entregasBoy.length}</div>
-                <div className="metric-lbl">Entregas</div>
-              </div>
-            </div>
+            ) : (
+              <button className="btn btn-outline" onClick={fecharTurno}
+                disabled={fechando || temVermelho} style={{ marginTop: 4 }}>
+                {fechando ? <><span className="spinner"></span>Verificando...</> :
+                  temVermelho ? 'Divergências pendentes' : 'Solicitar fechamento'}
+              </button>
+            )
+          )}
+        </div>
 
-            <div className="card">
-              <h2>Turno em andamento</h2>
-              {turnosAtivos.length === 0 ? (
-                <p className="muted">Nenhum turno aberto pelos motoboys vinculados.</p>
-              ) : (
-                <>
-                  {turnosAtivos.length > 1 && (
-                    <select value={turnoSelecionado?.id || ''} onChange={async e => {
-                      const t = turnosAtivos.find(x => x.id === e.target.value)
-                      setTurnoSelecionado(t)
-                      await carregarEntregas(t.id)
-                    }} style={{ marginBottom: 8 }}>
-                      {turnosAtivos.map(t => (
-                        <option key={t.id} value={t.id}>{t.profiles?.nome} — desde {formatarHora(t.inicio)}</option>
-                      ))}
-                    </select>
-                  )}
-                  {turnoSelecionado && (
-                    <>
-                      <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 8 }}>
-                        <span style={{ fontWeight: 500 }}>{turnoSelecionado.profiles?.nome}</span>
-                        {' · '}desde {formatarData(turnoSelecionado.inicio)} às {formatarHora(turnoSelecionado.inicio)}
-                      </div>
-                      <button className="btn btn-primary" onClick={() => setTela('nova-entrega')} style={{ marginBottom: 4 }}>
-                        + Registrar entrega
-                      </button>
-                      {turnoSelecionado.fechamento_loja ? (
-                        <div className="alert alert-info" style={{ marginTop: 8 }}>
-                          Aguardando confirmação do motoboy para fechar.
-                        </div>
-                      ) : (
-                        <button className="btn btn-outline" onClick={solicitarFechamento}
-                          disabled={solicitandoFechamento || temVermelho}
-                          style={{ marginTop: 4 }}>
-                          {solicitandoFechamento ? <><span className="spinner"></span>Verificando...</> :
-                            temVermelho ? 'Divergências pendentes' : 'Solicitar fechamento'}
-                        </button>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
-            </div>
+        {entregas.length > 0 && (
+          <div className="card">
+            <h2>Entregas</h2>
+            {turnoComDuploCheck && (
+              <p className="muted" style={{ marginBottom: 8, fontSize: 11 }}>
+                Verde = conferido · Amarelo = divergência leve · Vermelho = divergência
+              </p>
+            )}
 
-            {entregas.length > 0 && (
-              <div className="card">
-                <h2>Conferência de entregas</h2>
-                <p className="muted" style={{ marginBottom: 8, fontSize: 11 }}>
-                  Verde = conferido · Amarelo = divergência leve · Vermelho = divergência
-                </p>
+            {turnoComDuploCheck ? (
+              <>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginBottom: 6 }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', paddingLeft: 4 }}>BOY</div>
                   <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', paddingLeft: 4 }}>LOJA</div>
@@ -434,11 +505,127 @@ export default function LojaHome({ perfil, onLogout }) {
                     </div>
                   </div>
                 ))}
-                <div className="divider" />
-                <div className="total-bar">
-                  <div className="total-bar-lbl">Total (entregas boy)</div>
-                  <div className="total-bar-val">R${totalCusto.toFixed(2)}</div>
+              </>
+            ) : (
+              entregas.map(e => (
+                <div className="row" key={e.id}
+                  onClick={() => { setEntregaEditando(e); setTela('editar-entrega') }}
+                  style={{ cursor: 'pointer' }}>
+                  <div>
+                    <div style={{ fontWeight: 500, fontSize: 14 }}>{e.cliente}</div>
+                    <div className="muted">{e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}</div>
+                  </div>
+                  <div style={{ color: 'var(--yellow)', fontWeight: 600 }}>R${e.taxa.toFixed(2)}</div>
                 </div>
+              ))
+            )}
+
+            <div className="divider" />
+            <div className="total-bar">
+              <div className="total-bar-lbl">Total</div>
+              <div className="total-bar-val">R${totalCusto.toFixed(2)}</div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
+  // Tela HOME
+  return (
+    <div>
+      <div style={{ position: 'relative', width: '100%', height: 110, overflow: 'hidden', background: '#000' }}>
+        <img src="/logo-horizontal.png" alt="MotoTaxa"
+          style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', opacity: 0.92 }} />
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0,
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+          padding: '0 1rem 10px', background: 'linear-gradient(transparent, rgba(0,0,0,0.75))'
+        }}>
+          <div>
+            <span className="badge badge-loja">Estabelecimento</span>
+            <div style={{ color: '#fff', fontWeight: 600, fontSize: 15, marginTop: 2 }}>{estabAtivo?.nome || perfil.nome}</div>
+          </div>
+          <button className="btn btn-sm btn-outline" onClick={onLogout}
+            style={{ marginTop: 0, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}>Sair</button>
+        </div>
+      </div>
+
+      <div style={{ padding: '0 1rem' }}>
+        <div style={{ height: 12 }} />
+
+        {vincPendentes.length > 0 && (
+          <div className="alert alert-info" style={{ marginBottom: 12, cursor: 'pointer' }}
+            onClick={() => setTela('vinculos')}>
+            <strong>🔗 {vincPendentes.length} motoboy{vincPendentes.length > 1 ? 's' : ''} aguardando aprovação</strong>
+            <div style={{ fontSize: 12, marginTop: 2 }}>Toque para ver e aprovar</div>
+          </div>
+        )}
+
+        {estabelecimentos.length === 0 ? (
+          <div className="card">
+            <p className="muted" style={{ marginBottom: 12 }}>Configure seu estabelecimento para começar.</p>
+            <button className="btn btn-primary" onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
+              + Configurar estabelecimento
+            </button>
+          </div>
+        ) : (
+          <>
+            {abrindoTurno ? (
+              <div className="card">
+                <h2>Abrir novo turno</h2>
+                <label>Nome do motoboy</label>
+                <input
+                  placeholder="Ex: Guilherme, Gabriel..."
+                  value={nomeTurno}
+                  onChange={e => setNomeTurno(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && abrirTurno()}
+                  autoFocus
+                />
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <button className="btn btn-primary" style={{ flex: 1, marginTop: 0 }}
+                    onClick={abrirTurno} disabled={!nomeTurno.trim()}>
+                    Abrir turno
+                  </button>
+                  <button className="btn btn-outline" style={{ flex: 1, marginTop: 0 }}
+                    onClick={() => { setAbrindoTurno(false); setNomeTurno('') }}>
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button className="btn btn-primary" style={{ marginBottom: 12 }}
+                onClick={() => setAbrindoTurno(true)}>
+                + Abrir novo turno
+              </button>
+            )}
+
+            {turnos.length === 0 ? (
+              <div className="card">
+                <p className="muted">Nenhum turno aberto no momento.</p>
+              </div>
+            ) : (
+              <div className="card">
+                <h2>Turnos em andamento</h2>
+                {turnos.map(t => {
+                  const isLoja = isTurnoLoja(t)
+                  return (
+                    <div key={t.id} className="row" style={{ cursor: 'pointer', borderLeft: `3px solid ${isLoja ? 'var(--yellow)' : 'var(--green)'}`, paddingLeft: 8 }}
+                      onClick={async () => {
+                        setTurnoAtivo(t)
+                        await carregarEntregas(t.id)
+                        setTela('turno')
+                      }}>
+                      <div>
+                        <div style={{ fontWeight: 500, fontSize: 14 }}>{nomeTurnoDisplay(t)}</div>
+                        <div className="muted">desde {formatarData(t.inicio)} às {formatarHora(t.inicio)}</div>
+                        {isLoja && <div style={{ fontSize: 11, color: 'var(--yellow)' }}>turno da loja</div>}
+                        {!isLoja && t.fechamento_loja && <div style={{ fontSize: 11, color: 'var(--text-3)' }}>aguardando boy</div>}
+                      </div>
+                      <div style={{ color: 'var(--text-2)', fontSize: 20 }}>›</div>
+                    </div>
+                  )
+                })}
               </div>
             )}
 
@@ -462,18 +649,23 @@ export default function LojaHome({ perfil, onLogout }) {
               )}
             </div>
 
-            <div className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h2 style={{ margin: 0 }}>Motoboys vinculados</h2>
-                <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{vincAtivos.length} ativo{vincAtivos.length !== 1 ? 's' : ''}</span>
-              </div>
-              {vincAtivos.length === 0 && vincPendentes.length === 0 ? (
-                <p className="muted" style={{ marginTop: 8 }}>Nenhum motoboy vinculado ainda.</p>
-              ) : (
+            {vincAtivos.length > 0 && (
+              <div className="card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h2 style={{ margin: 0 }}>Motoboys vinculados</h2>
+                  <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{vincAtivos.length} ativo{vincAtivos.length !== 1 ? 's' : ''}</span>
+                </div>
                 <button className="btn btn-outline" style={{ marginTop: 8, fontSize: 13 }}
                   onClick={() => setTela('vinculos')}>Gerenciar vínculos</button>
-              )}
-            </div>
+              </div>
+            )}
+
+            {historicoTurnos.length > 0 && (
+              <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
+                onClick={() => setTela('historico')}>
+                Ver histórico de turnos
+              </button>
+            )}
 
             <div style={{ marginTop: 4 }}>
               <button className="btn btn-outline" style={{ width: '100%', fontSize: 12 }}
@@ -537,6 +729,130 @@ function GerenciarVinculosLoja({ vincAtivos, vincPendentes, onAceitar, onEncerra
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+function Relatorio({ turno, estabelecimento, entregas, onVoltar, formatarHora, formatarData }) {
+  const total = entregas.reduce((s, e) => s + e.taxa, 0)
+  const fixa = turno?.taxa_fixa_turno || 0
+  const grand = total + fixa
+  const kmTotal = entregas.reduce((s, e) => s + (e.km || 0), 0)
+  const nomeExibido = turno?.nome_turno || turno?.profiles?.nome || 'Motoboy'
+
+  async function compartilhar() {
+    const texto =
+      `🏍️ MotoTaxa — Fechamento\n📍 ${estabelecimento?.nome}\n` +
+      `👤 ${nomeExibido}\n` +
+      `📅 ${turno?.inicio ? formatarData(turno.inicio) : new Date().toLocaleDateString('pt-BR')}\n\n` +
+      entregas.map((e, i) => `#${i + 1} ${e.cliente} — ${e.km > 0 ? e.km.toFixed(1) + 'km' : e.bairro_destino} — R$${e.taxa.toFixed(2)}`).join('\n') +
+      `\n\n${fixa > 0 ? `Taxa fixa: R$${fixa.toFixed(2)}\n` : ''}Total: R$${grand.toFixed(2)}\nCorridas: ${entregas.length} | KM: ${kmTotal.toFixed(1)}`
+    if (navigator.share) await navigator.share({ title: 'MotoTaxa — Fechamento', text: texto })
+    else { await navigator.clipboard.writeText(texto); alert('Relatório copiado! Cole no WhatsApp.') }
+  }
+
+  return (
+    <div style={{ padding: '0 1rem' }}>
+      <div className="header" style={{ padding: '1rem 0 0.75rem' }}>
+        <button className="back-btn" onClick={onVoltar}>←</button>
+        <h1>Fechamento</h1>
+      </div>
+      <div className="card">
+        <div style={{ textAlign: 'center', padding: '0.5rem 0 1rem' }}>
+          <div style={{ fontFamily: 'Barlow Condensed', fontSize: 18, fontWeight: 700 }}>{estabelecimento?.nome}</div>
+          <div style={{ fontWeight: 500, marginTop: 2 }}>{nomeExibido}</div>
+          <div className="muted">{turno?.inicio ? `${formatarData(turno.inicio)} às ${formatarHora(turno.inicio)}` : new Date().toLocaleDateString('pt-BR')}</div>
+        </div>
+        <div className="grid2">
+          <div className="metric"><div className="metric-val">{entregas.length}</div><div className="metric-lbl">Corridas</div></div>
+          <div className="metric"><div className="metric-val">{kmTotal.toFixed(1)}</div><div className="metric-lbl">km</div></div>
+        </div>
+        <div className="divider" />
+        {entregas.map((e, i) => (
+          <div className="row" key={e.id}>
+            <div>
+              <span className="muted-sm">#{i + 1} </span>
+              <span style={{ fontWeight: 500 }}>{e.cliente}</span>
+              <div className="muted">
+                {e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}
+                {e.created_at && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-3)' }}>{formatarHora(e.created_at)}</span>}
+              </div>
+            </div>
+            <span style={{ fontWeight: 600 }}>R${e.taxa.toFixed(2)}</span>
+          </div>
+        ))}
+        <div className="divider" />
+        {fixa > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-2)', marginBottom: 8 }}>
+            <span>Taxa fixa do turno</span><span>R${fixa.toFixed(2)}</span>
+          </div>
+        )}
+        <div className="total-bar">
+          <div className="total-bar-lbl">Total geral</div>
+          <div className="total-bar-val">R${grand.toFixed(2)}</div>
+        </div>
+        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={compartilhar}>Compartilhar via WhatsApp</button>
+      </div>
+    </div>
+  )
+}
+
+function Historico({ turnos, onVoltar, onVerRelatorio, onApagarTurno, nomeTurnoDisplay, formatarData, formatarHora }) {
+  const [confirmandoApagar, setConfirmandoApagar] = useState(null)
+  const [apagando, setApagando] = useState(false)
+
+  async function confirmarApagar(turnoId) {
+    setApagando(true)
+    await onApagarTurno(turnoId)
+    setConfirmandoApagar(null)
+    setApagando(false)
+  }
+
+  return (
+    <div style={{ padding: '0 1rem' }}>
+      <div className="header" style={{ padding: '1rem 0 0.75rem' }}>
+        <button className="back-btn" onClick={onVoltar}>←</button>
+        <h1>Histórico de turnos</h1>
+      </div>
+      {turnos.length === 0 && <p className="muted">Nenhum turno fechado ainda.</p>}
+      {turnos.map(t => {
+        const esteConfirmando = confirmandoApagar === t.id
+        return (
+          <div className="card" key={t.id} style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <div style={{ fontWeight: 500 }}>{nomeTurnoDisplay(t)}</div>
+                <div className="muted">{formatarData(t.inicio)} · {formatarHora(t.inicio)}</div>
+                {t.fim && <div className="muted-sm">até {formatarHora(t.fim)}</div>}
+              </div>
+              <div style={{ color: 'var(--yellow)', fontWeight: 600, fontSize: 15 }}>R${(t.taxa_fixa_turno || 0).toFixed(2)}</div>
+            </div>
+            {!esteConfirmando ? (
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                <button className="btn btn-outline" style={{ flex: 1, marginTop: 0, fontSize: 13 }}
+                  onClick={() => onVerRelatorio(t)}>Ver relatório</button>
+                <button className="btn btn-outline"
+                  style={{ marginTop: 0, fontSize: 13, color: 'var(--red)', borderColor: 'var(--red)', padding: '8px 14px' }}
+                  onClick={() => setConfirmandoApagar(t.id)}>Apagar</button>
+              </div>
+            ) : (
+              <div className="alert alert-warn" style={{ marginTop: 10 }}>
+                <div style={{ marginBottom: 8, fontWeight: 500 }}>Apagar este turno e todas as entregas?</div>
+                <div style={{ fontSize: 12, marginBottom: 10 }}>Esta ação não pode ser desfeita.</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn btn-sm"
+                    style={{ flex: 1, marginTop: 0, background: 'var(--red)', borderColor: 'var(--red)', color: '#fff' }}
+                    onClick={() => confirmarApagar(t.id)} disabled={apagando}>
+                    {apagando ? <span className="spinner"></span> : 'Sim, apagar'}
+                  </button>
+                  <button className="btn btn-sm btn-outline" style={{ flex: 1, marginTop: 0 }}
+                    onClick={() => setConfirmandoApagar(null)}>Cancelar</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
