@@ -32,9 +32,11 @@ export function calcularTaxa(km, bairroDestino, regras) {
     const faixa = regras.faixas_km.find(f => km >= f.km_min && km <= f.km_max)
     if (faixa) {
       if (faixa.tipo === 'por_km') {
-        const val = +(km * faixa.valor).toFixed(2)
+        // Arredonda o km para baixo antes de multiplicar, e o resultado final é redondo (sem centavos)
+        const kmArredondado = Math.floor(km)
+        const val = Math.floor(kmArredondado * faixa.valor)
         total += val
-        detalhes.push(`${km.toFixed(1)} km × R$${faixa.valor}/km = R$${val.toFixed(2)}`)
+        detalhes.push(`${kmArredondado} km × R$${faixa.valor}/km = R$${val.toFixed(2)}`)
       } else {
         total += faixa.valor
         detalhes.push(`Faixa ${faixa.km_min}–${faixa.km_max} km = R$${faixa.valor.toFixed(2)} fixo`)
@@ -46,8 +48,8 @@ export function calcularTaxa(km, bairroDestino, regras) {
 
   // Excedente
   if (regras.excedente_km && km > regras.excedente_km.acima_de_km) {
-    const exc = +(km - regras.excedente_km.acima_de_km).toFixed(1)
-    const extra = +(exc * regras.excedente_km.valor_extra).toFixed(2)
+    const exc = Math.floor(km - regras.excedente_km.acima_de_km)
+    const extra = Math.floor(exc * regras.excedente_km.valor_extra)
     total += extra
     detalhes.push(`+${exc} km excedente × R$${regras.excedente_km.valor_extra} = R$${extra.toFixed(2)}`)
   }
