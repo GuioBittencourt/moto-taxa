@@ -28,7 +28,7 @@ export async function POST(request) {
       const data = await resp.json()
       console.log('NOMINATIM', JSON.stringify({ tentativa: endExpandido, resultados: data.length, primeiro: data[0]?.display_name || null }))
       if (data.length === 0) return null
-      return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) }
+      return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), nome: data[0].display_name }
     }
 
     async function calcularRota(coordOrigem, coordDestino) {
@@ -47,6 +47,8 @@ export async function POST(request) {
       }
       return { ok: false }
     }
+
+    const LIMITE_KM_PLAUSIVEL = 30
 
     const partes = destino.split(',').map(p => p.trim())
     const sufixosIgnorar = ['sp', 'brasil', 'brazil', 'rj', 'mg', 'pr', 'rs', 'ba', 'sc']
@@ -69,10 +71,11 @@ export async function POST(request) {
       return Response.json({ ok: false, error: 'Origem não encontrada. Informe o km manualmente.' }, { status: 400 })
     }
 
+    // Tentativas com cidade primeiro (mais confiáveis) — tentativas sem cidade ficam por último e são as mais arriscadas
     const variacoesDestino = [
       numero ? `${rua}, ${numero}, ${cidade}, SP` : `${rua}, ${cidade}, SP`,
-      numero ? `${rua}, ${numero}, SP` : `${rua}, SP`,
       bairro ? `${bairro}, ${cidade}, SP` : null,
+      numero ? `${rua}, ${numero}, SP` : `${rua}, SP`,
       bairro ? `${bairro}, SP` : null,
     ].filter(Boolean)
 
@@ -87,7 +90,17 @@ export async function POST(request) {
     }
 
     const resultado = await calcularRota(coordOrigem, coordDestino)
-    if (resultado.ok) return Response.json(resultado)
+
+    if (resultado.ok) {
+      if (resultado.km > LIMITE_KM_PLAUSIVEL) {
+        console.log('REJEITADO_KM_ABSURDO', JSON.stringify({ km: resultado.km, destinoGeocodificado: coordDestino.nome }))
+        return Response.json({
+          ok: false,
+          error: `Distância calculada (${resultado.km} km) parece incorreta. Informe o km manualmente.`
+        }, { status: 400 })
+      }
+      return Response.json(resultado)
+    }
 
     return Response.json({ ok: false, error: 'Rota não calculada. Informe o km manualmente.' }, { status: 400 })
 
