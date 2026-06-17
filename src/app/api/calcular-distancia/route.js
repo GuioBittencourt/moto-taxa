@@ -73,7 +73,7 @@ export async function POST(request) {
       const data = await resp.json()
       console.log('NOMINATIM', JSON.stringify({ tentativa: endExpandido, resultados: data.length, primeiro: data[0]?.display_name || null }))
       if (data.length === 0) return null
-      return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) }
+      return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), nome: data[0].display_name }
     }
 
     async function calcularRota(coordOrigem, coordDestino) {
@@ -156,7 +156,7 @@ export async function POST(request) {
 
     if (resultado.ok) {
       if (resultado.km > LIMITE_KM_PLAUSIVEL) {
-        console.log('REJEITADO_KM_ABSURDO', JSON.stringify({ km: resultado.km }))
+        console.log('REJEITADO_KM_ABSURDO', JSON.stringify({ km: resultado.km, destinoGeocodificado: coordDestino.nome }))
         return Response.json({
           ok: false,
           error: `Distância calculada (${resultado.km} km) parece incorreta. Informe o km manualmente.`
