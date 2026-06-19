@@ -1,6 +1,12 @@
 export function calcularTaxa(km, bairroDestino, regras) {
   if (!regras) return { valor: 0, descricao: 'Sem regras configuradas' }
 
+  // Arredonda o km para baixo logo no início, antes de qualquer verificação de faixa.
+  // Isso evita que valores quebrados (ex: 4.7km) caiam fora do teto de uma faixa (ex: "1-5km")
+  // só por causa da casa decimal, o que zerava o total e acionava a taxa mínima incorretamente.
+  const kmOriginal = km
+  km = km > 0 ? Math.floor(km) : km
+
   let total = 0
   const detalhes = []
 
@@ -32,17 +38,15 @@ export function calcularTaxa(km, bairroDestino, regras) {
     const faixa = regras.faixas_km.find(f => km >= f.km_min && km <= f.km_max)
     if (faixa) {
       if (faixa.tipo === 'por_km') {
-        // Arredonda o km para baixo antes de multiplicar, e o resultado final é redondo (sem centavos)
-        const kmArredondado = Math.floor(km)
-        const val = Math.floor(kmArredondado * faixa.valor)
+        const val = Math.floor(km * faixa.valor)
         total += val
-        detalhes.push(`${kmArredondado} km × R$${faixa.valor}/km = R$${val.toFixed(2)}`)
+        detalhes.push(`${km} km × R$${faixa.valor}/km = R$${val.toFixed(2)}`)
       } else {
         total += faixa.valor
         detalhes.push(`Faixa ${faixa.km_min}–${faixa.km_max} km = R$${faixa.valor.toFixed(2)} fixo`)
       }
     } else {
-      detalhes.push(`${km.toFixed(1)} km fora das faixas`)
+      detalhes.push(`${kmOriginal.toFixed(1)} km fora das faixas`)
     }
   }
 
