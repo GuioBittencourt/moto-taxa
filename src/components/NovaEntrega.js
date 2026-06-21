@@ -45,6 +45,7 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
   const [infoMaps, setInfoMaps] = useState('')
   const [fotoPreview, setFotoPreview] = useState(null)
   const [kmVeioDeCalculoAutomatico, setKmVeioDeCalculoAutomatico] = useState(false)
+  const [confiancaCache, setConfiancaCache] = useState(null)
 
   const regras = estabelecimento?.regras || {}
   const tipoCalculo = estabelecimento?.tipo_calculo || 'km'
@@ -84,6 +85,7 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
 
   async function buscarKmMaps() {
     setInfoMaps('Calculando distância...')
+    setConfiancaCache(null)
     const cidade = cidadeDestino || cidadeEstab
     let origemMaps, destinoMaps, ruaParaCache, bairroParaCache
 
@@ -116,17 +118,30 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
       const data = await resp.json()
       if (data.ok) {
         setKm(String(data.km))
-        setInfoMaps(data.deCache ? `Endereço já conhecido: ${data.km} km` : `Maps: ${data.km} km (${data.duracao})`)
         setKmVeioDeCalculoAutomatico(true)
+
+        const total = data.totalAmostras || 1
+        if (data.deCache && total >= 3) {
+          setInfoMaps(`📍 Endereço conhecido: ${data.km} km`)
+          setConfiancaCache({ nivel: 'alta', total })
+        } else if (data.deCache) {
+          setInfoMaps(`Endereço já visto antes: ${data.km} km`)
+          setConfiancaCache({ nivel: 'media', total })
+        } else {
+          setInfoMaps(`Maps: ${data.km} km (${data.duracao})`)
+          setConfiancaCache({ nivel: 'nova', total: 1 })
+        }
         return data.km
       } else {
         setInfoMaps('Não encontrado. Informe o km manualmente.')
         setKmVeioDeCalculoAutomatico(false)
+        setConfiancaCache(null)
         return 0
       }
     } catch {
       setInfoMaps('Erro ao calcular. Informe o km manualmente.')
       setKmVeioDeCalculoAutomatico(false)
+      setConfiancaCache(null)
       return 0
     }
   }
@@ -142,7 +157,6 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
       }
       distanciaKm = await buscarKmMaps()
     } else if (distanciaKm > 0) {
-      // km já estava preenchido manualmente antes de clicar em Calcular
       setKmVeioDeCalculoAutomatico(false)
     }
 
@@ -282,20 +296,20 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
             <input
               placeholder={modeMedicao === 'bairro' ? 'Ex: Jardim Satélite' : 'Ex: Rua das Flores, 123'}
               value={endDestino}
-              onChange={e => { setEndDestino(e.target.value); setInfoMaps(''); setKm(''); setKmVeioDeCalculoAutomatico(false) }}
+              onChange={e => { setEndDestino(e.target.value); setInfoMaps(''); setKm(''); setKmVeioDeCalculoAutomatico(false); setConfiancaCache(null) }}
             />
             {modeMedicao === 'bairro' && (
               <>
                 <label>Bairro de destino</label>
                 <input placeholder="Ex: Jardim Satélite" value={bairroDestino}
-                  onChange={e => { setBairroDestino(e.target.value); setInfoMaps(''); setKm(''); setKmVeioDeCalculoAutomatico(false) }} />
+                  onChange={e => { setBairroDestino(e.target.value); setInfoMaps(''); setKm(''); setKmVeioDeCalculoAutomatico(false); setConfiancaCache(null) }} />
               </>
             )}
             <label>Distância em km</label>
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <input type="number" placeholder="Vazio = calcular automaticamente"
                 step="0.1" value={km}
-                onChange={e => { setKm(e.target.value); setKmVeioDeCalculoAutomatico(false) }}
+                onChange={e => { setKm(e.target.value); setKmVeioDeCalculoAutomatico(false); setConfiancaCache(null) }}
                 style={{ flex: 1 }} />
               <button className="btn btn-outline btn-sm"
                 style={{ marginTop: 0, padding: '0 14px', height: 42 }}
@@ -304,8 +318,18 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
               </button>
             </div>
             {infoMaps && (
-              <p className="muted-sm" style={{ marginTop: 6, color: (infoMaps.includes('Maps:') || infoMaps.includes('conhecido')) ? 'var(--green)' : 'var(--text-2)' }}>
+              <p className="muted-sm" style={{
+                marginTop: 6,
+                color: confiancaCache?.nivel === 'alta' ? 'var(--green)'
+                  : confiancaCache?.nivel === 'media' ? 'var(--yellow)'
+                  : (infoMaps.includes('Maps:')) ? 'var(--green)' : 'var(--text-2)'
+              }}>
                 {infoMaps}
+              </p>
+            )}
+            {confiancaCache?.nivel === 'nova' && (
+              <p className="muted-sm" style={{ marginTop: 2, color: 'var(--text-3)', fontSize: 11 }}>
+                ⚠️ primeira vez neste endereço — confira a distância antes de confirmar
               </p>
             )}
           </>

@@ -97,7 +97,7 @@ export async function POST(request) {
       const buscaRua = modeMedicao === 'bairro' ? null : chaveNormalizada(rua || '')
       const buscaCidade = chaveNormalizada(cidade || '')
 
-      let query = supabase.from('geocache').select('km_calculado, duracao')
+      let query = supabase.from('geocache').select('km_calculado, duracao, total_amostras, origem')
         .eq('estab_id', estabId)
         .eq('modo_medicao', modeMedicao || 'rua')
         .eq('bairro', buscaBairro)
@@ -109,7 +109,14 @@ export async function POST(request) {
 
       if (cacheHit) {
         console.log('CACHE_HIT', JSON.stringify(cacheHit))
-        return Response.json({ ok: true, km: cacheHit.km_calculado, duracao: cacheHit.duracao || 'estimado', deCache: true })
+        return Response.json({
+          ok: true,
+          km: cacheHit.km_calculado,
+          duracao: cacheHit.duracao || 'estimado',
+          deCache: true,
+          totalAmostras: cacheHit.total_amostras || 1,
+          origemCache: cacheHit.origem
+        })
       }
     }
 
@@ -163,7 +170,7 @@ export async function POST(request) {
         }, { status: 400 })
       }
 
-      // --- 3. Salva no cache para próximas consultas ---
+      // --- 3. Salva no cache (primeira vez, sem amostras ainda) ---
       if (estabId) {
         const buscaBairro = chaveNormalizada(bairro || bairroDestino || '')
         const buscaRua = modeMedicao === 'bairro' ? null : chaveNormalizada(rua || ruaDestino || '')
@@ -177,11 +184,12 @@ export async function POST(request) {
           modo_medicao: modeMedicao || 'rua',
           km_calculado: resultado.km,
           duracao: resultado.duracao,
-          origem: 'nominatim'
+          origem: 'nominatim',
+          total_amostras: 1
         }, { onConflict: 'estab_id,rua,bairro,cidade,modo_medicao' })
       }
 
-      return Response.json(resultado)
+      return Response.json({ ...resultado, totalAmostras: 1, origemCache: 'nominatim' })
     }
 
     return Response.json({ ok: false, error: 'Rota não calculada. Informe o km manualmente.' }, { status: 400 })
