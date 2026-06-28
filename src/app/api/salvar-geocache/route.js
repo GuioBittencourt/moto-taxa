@@ -94,7 +94,7 @@ export async function POST(request) {
       duracao: null,
       origem: 'manual',
       total_amostras: amostrasAtuais.length
-    }, { onConflict: 'estab_id,rua,bairro,cidade,modo_medicao' })
+    }, { onConflict: 'geocache_unique_idx' })
 
     console.log('SALVAR_UPSERT_ERRO', JSON.stringify(erroUpsert))
 
