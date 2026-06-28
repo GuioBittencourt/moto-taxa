@@ -23,7 +23,6 @@ function reduzirImagem(file, maxWidth, qualidade) {
   })
 }
 
-// entregaExistente: objeto da entrega para edição, null para nova
 export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfirmado, onVoltar, origemOverride, entregaExistente }) {
   const editando = !!entregaExistente
 
@@ -69,11 +68,18 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
       })
       const data = await resp.json()
       if (data.ok) {
+        const endLido = data.data.endereco_completo || data.data.rua || ''
+        const bairroLido = data.data.bairro || ''
+        const cidadeLida = data.data.cidade || cidadeEstab
+
         setCliente(data.data.cliente || '')
-        setEndDestino(data.data.endereco_completo || data.data.rua || '')
-        setBairroDestino(data.data.bairro || '')
-        setCidadeDestino(data.data.cidade || cidadeEstab)
-        setInfoMaps('Comanda lida. Clique em Calcular para obter o km.')
+        setEndDestino(endLido)
+        setBairroDestino(bairroLido)
+        setCidadeDestino(cidadeLida)
+        setInfoMaps('Comanda lida. Calculando distância...')
+
+        // Calcula automaticamente usando os dados frescos da IA
+        await buscarKmMapsComDados(endLido, bairroLido, cidadeLida)
       } else {
         setErro('Não consegui ler a comanda: ' + (data.error || 'tente novamente'))
       }
@@ -83,27 +89,32 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
     setLendoFoto(false)
   }
 
-  async function buscarKmMaps() {
+  // Aceita parâmetros diretos (quando chamado pela IA) ou usa estado (quando chamado pelo botão Calcular)
+  async function buscarKmMapsComDados(endDest, bairroDest, cidadeDest) {
+    const endFinal = endDest !== undefined ? endDest : endDestino
+    const bairroFinal = bairroDest !== undefined ? bairroDest : bairroDestino
+    const cidadeFinal = cidadeDest !== undefined ? cidadeDest : (cidadeDestino || cidadeEstab)
+
     setInfoMaps('Calculando distância...')
     setConfiancaCache(null)
-    const cidade = cidadeDestino || cidadeEstab
+
     let origemMaps, destinoMaps, ruaParaCache, bairroParaCache
 
     if (modeMedicao === 'bairro') {
       origemMaps = bairroSaidaEstab
         ? `${bairroSaidaEstab}, ${cidadeEstab}, SP, Brasil`
         : `${estabelecimento?.endereco_saida}, ${cidadeEstab}, SP, Brasil`
-      const endBase = endDestino && endDestino.length > 5 ? endDestino : bairroDestino
-      const jaTemCidade = endBase.toLowerCase().includes(cidade.toLowerCase())
-      destinoMaps = jaTemCidade ? `${endBase}, SP, Brasil` : `${endBase}, ${cidade}, SP, Brasil`
+      const endBase = endFinal && endFinal.length > 5 ? endFinal : bairroFinal
+      const jaTemCidade = endBase.toLowerCase().includes(cidadeFinal.toLowerCase())
+      destinoMaps = jaTemCidade ? `${endBase}, SP, Brasil` : `${endBase}, ${cidadeFinal}, SP, Brasil`
       ruaParaCache = null
-      bairroParaCache = bairroDestino || endBase
+      bairroParaCache = bairroFinal || endBase
     } else {
       origemMaps = `${estabelecimento?.endereco_saida}, ${cidadeEstab}, SP, Brasil`
-      const jaTemCidade = endDestino.toLowerCase().includes(cidade.toLowerCase())
-      destinoMaps = jaTemCidade ? `${endDestino}, SP, Brasil` : `${endDestino}, ${cidade}, SP, Brasil`
-      ruaParaCache = endDestino
-      bairroParaCache = bairroDestino
+      const jaTemCidade = endFinal.toLowerCase().includes(cidadeFinal.toLowerCase())
+      destinoMaps = jaTemCidade ? `${endFinal}, SP, Brasil` : `${endFinal}, ${cidadeFinal}, SP, Brasil`
+      ruaParaCache = endFinal
+      bairroParaCache = bairroFinal
     }
 
     try {
@@ -112,13 +123,17 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           origem: origemMaps, destino: destinoMaps, modeMedicao,
-          estabId: estabelecimento?.id, rua: ruaParaCache, bairro: bairroParaCache, cidade
+          estabId: estabelecimento?.id, rua: ruaParaCache, bairro: bairroParaCache, cidade: cidadeFinal
         })
       })
       const data = await resp.json()
       if (data.ok) {
         setKm(String(data.km))
         setKmVeioDeCalculoAutomatico(true)
+
+        // Já calcula a taxa automaticamente com o km retornado
+        const r = calcularTaxa(data.km, bairroFinal, regras)
+        setResultado({ km: data.km, ...r })
 
         const total = data.totalAmostras || 1
         if (data.deCache && total >= 3) {
@@ -155,9 +170,11 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         setErro('Informe o endereço ou bairro de destino')
         setCalculando(false); return
       }
-      distanciaKm = await buscarKmMaps()
+      distanciaKm = await buscarKmMapsComDados()
     } else if (distanciaKm > 0) {
       setKmVeioDeCalculoAutomatico(false)
+      const r = calcularTaxa(distanciaKm, bairroDestino, regras)
+      setResultado({ km: distanciaKm, ...r })
     }
 
     if (distanciaKm === 0 && !usaBairroFixo) {
@@ -165,9 +182,21 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
       setCalculando(false); return
     }
 
-    const r = calcularTaxa(distanciaKm, bairroDestino, regras)
-    setResultado({ km: distanciaKm, ...r })
     setCalculando(false)
+  }
+
+  function atualizarKm(valor) {
+    setKm(valor)
+    setKmVeioDeCalculoAutomatico(false)
+    setConfiancaCache(null)
+    const distanciaKm = parseFloat(valor.toString().replace(',', '.')) || 0
+    if (distanciaKm > 0) {
+      // Atualiza taxa automaticamente ao digitar km válido
+      const r = calcularTaxa(distanciaKm, bairroDestino, regras)
+      setResultado({ km: distanciaKm, ...r })
+    } else {
+      setResultado(null)
+    }
   }
 
   async function salvarKmManualNoCache(kmFinal) {
@@ -186,7 +215,7 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         })
       })
     } catch {
-      // falha silenciosa — não bloqueia o fluxo de confirmar entrega
+      // falha silenciosa
     }
   }
 
@@ -296,20 +325,20 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
             <input
               placeholder={modeMedicao === 'bairro' ? 'Ex: Jardim Satélite' : 'Ex: Rua das Flores, 123'}
               value={endDestino}
-              onChange={e => { setEndDestino(e.target.value); setInfoMaps(''); setKm(''); setKmVeioDeCalculoAutomatico(false); setConfiancaCache(null) }}
+              onChange={e => { setEndDestino(e.target.value); setInfoMaps(''); setKm(''); setKmVeioDeCalculoAutomatico(false); setConfiancaCache(null); setResultado(null) }}
             />
             {modeMedicao === 'bairro' && (
               <>
                 <label>Bairro de destino</label>
                 <input placeholder="Ex: Jardim Satélite" value={bairroDestino}
-                  onChange={e => { setBairroDestino(e.target.value); setInfoMaps(''); setKm(''); setKmVeioDeCalculoAutomatico(false); setConfiancaCache(null) }} />
+                  onChange={e => { setBairroDestino(e.target.value); setInfoMaps(''); setKm(''); setKmVeioDeCalculoAutomatico(false); setConfiancaCache(null); setResultado(null) }} />
               </>
             )}
             <label>Distância em km</label>
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <input type="number" placeholder="Vazio = calcular automaticamente"
                 step="0.1" value={km}
-                onChange={e => { setKm(e.target.value); setKmVeioDeCalculoAutomatico(false); setConfiancaCache(null) }}
+                onChange={e => atualizarKm(e.target.value)}
                 style={{ flex: 1 }} />
               <button className="btn btn-outline btn-sm"
                 style={{ marginTop: 0, padding: '0 14px', height: 42 }}
