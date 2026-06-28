@@ -56,7 +56,7 @@ export async function POST(request) {
   try {
     const { origem, destino, modeMedicao, estabId, rua, bairro, cidade } = await request.json()
 
-    console.log('DESTINO_RAW', JSON.stringify({ origem, destino, estabId }))
+    console.log('DESTINO_RAW', JSON.stringify({ origem, destino, estabId, modeMedicao, rua, bairro, cidade }))
 
     const LIMITE_KM_PLAUSIVEL = 30
 
