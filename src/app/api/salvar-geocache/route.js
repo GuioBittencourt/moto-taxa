@@ -30,7 +30,10 @@ export async function POST(request) {
   try {
     const { estabId, rua, bairro, cidade, modoMedicao, km } = await request.json()
 
+    console.log('SALVAR_GEOCACHE_INPUT', JSON.stringify({ estabId, rua, bairro, cidade, modoMedicao, km }))
+
     if (!estabId || !km || km <= 0) {
+      console.log('SALVAR_GEOCACHE_INVALIDO', JSON.stringify({ estabId, km }))
       return Response.json({ ok: false, error: 'Dados insuficientes' }, { status: 400 })
     }
 
@@ -39,8 +42,10 @@ export async function POST(request) {
     const buscaCidade = chaveNormalizada(cidade || '')
     const modo = modoMedicao || 'rua'
 
+    console.log('SALVAR_GEOCACHE_CHAVES', JSON.stringify({ buscaRua, buscaBairro, buscaCidade, modo }))
+
     // 1. Insere a nova amostra
-    await supabase.from('geocache_amostras').insert({
+    const { error: erroAmostra } = await supabase.from('geocache_amostras').insert({
       estab_id: estabId,
       rua: buscaRua,
       bairro: buscaBairro,
@@ -48,21 +53,22 @@ export async function POST(request) {
       modo_medicao: modo,
       km
     })
+    console.log('SALVAR_AMOSTRA_ERRO', JSON.stringify(erroAmostra))
 
     // 2. Busca todas as amostras desse endereço, mais recentes primeiro
-    let query = supabase.from('geocache_amostras').select('id, km, created_at')
+    const { data: amostras, error: erroQuery } = await supabase
+      .from('geocache_amostras').select('id, km, created_at')
       .eq('estab_id', estabId)
       .eq('modo_medicao', modo)
       .eq('bairro', buscaBairro)
       .eq('cidade', buscaCidade)
+      .eq('rua', buscaRua)
       .order('created_at', { ascending: false })
 
-    query = buscaRua ? query.eq('rua', buscaRua) : query.is('rua', null)
-
-    const { data: amostras } = await query
+    console.log('SALVAR_AMOSTRAS_QUERY', JSON.stringify({ total: amostras?.length, erro: erroQuery }))
 
     if (!amostras || amostras.length === 0) {
-      return Response.json({ ok: true })
+      return Response.json({ ok: true, msg: 'amostra inserida mas query retornou vazio' })
     }
 
     // 3. Se passou do limite, apaga as mais antigas (FIFO)
@@ -75,8 +81,10 @@ export async function POST(request) {
     const kms = amostrasAtuais.map(a => a.km)
     const kmMediana = mediana(kms)
 
+    console.log('SALVAR_MEDIANA', JSON.stringify({ kms, kmMediana }))
+
     // 4. Atualiza o cache principal com a mediana
-    await supabase.from('geocache').upsert({
+    const { error: erroUpsert } = await supabase.from('geocache').upsert({
       estab_id: estabId,
       rua: buscaRua,
       bairro: buscaBairro,
@@ -88,8 +96,11 @@ export async function POST(request) {
       total_amostras: amostrasAtuais.length
     }, { onConflict: 'estab_id,rua,bairro,cidade,modo_medicao' })
 
+    console.log('SALVAR_UPSERT_ERRO', JSON.stringify(erroUpsert))
+
     return Response.json({ ok: true, kmMediana, totalAmostras: amostrasAtuais.length })
   } catch (error) {
+    console.log('SALVAR_ERRO_GERAL', error.message)
     return Response.json({ ok: false, error: error.message }, { status: 500 })
   }
 }
