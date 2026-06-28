@@ -94,7 +94,7 @@ export async function POST(request) {
     // --- 1. Verifica cache primeiro ---
     if (estabId) {
       const buscaBairro = chaveNormalizada(bairro || '')
-      const buscaRua = modeMedicao === 'bairro' ? null : chaveNormalizada(rua || '')
+      const buscaRua = modeMedicao === 'bairro' ? '' : chaveNormalizada(rua || '')
       const buscaCidade = chaveNormalizada(cidade || '')
 
       let query = supabase.from('geocache').select('km_calculado, duracao, total_amostras, origem')
@@ -103,7 +103,7 @@ export async function POST(request) {
         .eq('bairro', buscaBairro)
         .eq('cidade', buscaCidade)
 
-      query = buscaRua ? query.eq('rua', buscaRua) : query.is('rua', null)
+      query = query.eq('rua', buscaRua)
 
       const { data: cacheHit } = await query.maybeSingle()
 

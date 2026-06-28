@@ -35,7 +35,7 @@ export async function POST(request) {
     }
 
     const buscaBairro = chaveNormalizada(bairro || '')
-    const buscaRua = modoMedicao === 'bairro' ? null : chaveNormalizada(rua || '')
+    const buscaRua = modoMedicao === 'bairro' ? '' : chaveNormalizada(rua || '')
     const buscaCidade = chaveNormalizada(cidade || '')
     const modo = modoMedicao || 'rua'
 
