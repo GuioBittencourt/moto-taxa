@@ -1,3 +1,4 @@
+// NovaEntrega.js
 'use client'
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
@@ -46,6 +47,10 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
   const [kmVeioDeCalculoAutomatico, setKmVeioDeCalculoAutomatico] = useState(false)
   const [confiancaCache, setConfiancaCache] = useState(null)
 
+  // Lista de entregas pendentes (múltiplas)
+  const [entregasPendentes, setEntregasPendentes] = useState([])
+  const [adicionandoMais, setAdicionandoMais] = useState(false)
+
   const regras = estabelecimento?.regras || {}
   const tipoCalculo = estabelecimento?.tipo_calculo || 'km'
   const modeMedicao = regras.mode_medicao || 'rua'
@@ -54,6 +59,12 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
   const cidadeEstab = estabelecimento?.cidade || 'São José dos Campos'
   const bairroSaidaEstab = estabelecimento?.bairro_saida || ''
   const origem = origemOverride || 'boy'
+
+  function limparFormulario() {
+    setCliente(''); setEndDestino(''); setBairroDestino(''); setCidadeDestino('')
+    setKm(''); setResultado(null); setInfoMaps(''); setFotoPreview(null)
+    setKmVeioDeCalculoAutomatico(false); setConfiancaCache(null); setErro('')
+  }
 
   async function lerFoto(file) {
     setLendoFoto(true); setErro(''); setInfoMaps('')
@@ -71,14 +82,11 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         const endLido = data.data.endereco_completo || data.data.rua || ''
         const bairroLido = data.data.bairro || ''
         const cidadeLida = data.data.cidade || cidadeEstab
-
         setCliente(data.data.cliente || '')
         setEndDestino(endLido)
         setBairroDestino(bairroLido)
         setCidadeDestino(cidadeLida)
         setInfoMaps('Comanda lida. Calculando distância...')
-
-        // Calcula automaticamente usando os dados frescos da IA
         await buscarKmMapsComDados(endLido, bairroLido, cidadeLida)
       } else {
         setErro('Não consegui ler a comanda: ' + (data.error || 'tente novamente'))
@@ -89,7 +97,6 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
     setLendoFoto(false)
   }
 
-  // Aceita parâmetros diretos (quando chamado pela IA) ou usa estado (quando chamado pelo botão Calcular)
   async function buscarKmMapsComDados(endDest, bairroDest, cidadeDest) {
     const endFinal = endDest !== undefined ? endDest : endDestino
     const bairroFinal = bairroDest !== undefined ? bairroDest : bairroDestino
@@ -130,11 +137,8 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
       if (data.ok) {
         setKm(String(data.km))
         setKmVeioDeCalculoAutomatico(true)
-
-        // Já calcula a taxa automaticamente com o km retornado
         const r = calcularTaxa(data.km, bairroFinal, regras)
-        setResultado({ km: data.km, ...r })
-
+        setResultado({ km: data.km, ...r, endDestino: endFinal, bairroDestino: bairroFinal })
         const total = data.totalAmostras || 1
         if (data.deCache && total >= 3) {
           setInfoMaps(`📍 Endereço conhecido: ${data.km} km`)
@@ -174,7 +178,7 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
     } else if (distanciaKm > 0) {
       setKmVeioDeCalculoAutomatico(false)
       const r = calcularTaxa(distanciaKm, bairroDestino, regras)
-      setResultado({ km: distanciaKm, ...r })
+      setResultado({ km: distanciaKm, ...r, endDestino, bairroDestino })
     }
 
     if (distanciaKm === 0 && !usaBairroFixo) {
@@ -191,15 +195,14 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
     setConfiancaCache(null)
     const distanciaKm = parseFloat(valor.toString().replace(',', '.')) || 0
     if (distanciaKm > 0) {
-      // Atualiza taxa automaticamente ao digitar km válido
       const r = calcularTaxa(distanciaKm, bairroDestino, regras)
-      setResultado({ km: distanciaKm, ...r })
+      setResultado({ km: distanciaKm, ...r, endDestino, bairroDestino })
     } else {
       setResultado(null)
     }
   }
 
-  async function salvarKmManualNoCache(kmFinal) {
+  async function salvarKmManualNoCache(kmFinal, endDest, bairroDest, cidadeDest) {
     if (usaBairroFixo || kmVeioDeCalculoAutomatico || !estabelecimento?.id || !kmFinal) return
     try {
       await fetch('/api/salvar-geocache', {
@@ -207,25 +210,78 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           estabId: estabelecimento.id,
-          rua: modeMedicao === 'bairro' ? null : endDestino,
-          bairro: bairroDestino,
-          cidade: cidadeDestino || cidadeEstab,
+          rua: modeMedicao === 'bairro' ? null : (endDest || endDestino),
+          bairro: bairroDest || bairroDestino,
+          cidade: cidadeDest || cidadeDestino || cidadeEstab,
           modoMedicao: modeMedicao,
           km: kmFinal
         })
       })
-    } catch {
-      // falha silenciosa
+    } catch { }
+  }
+
+  // Adiciona entrega atual à lista de pendentes (sem salvar ainda)
+  function adicionarEntregaNaLista() {
+    if (!resultado) return
+    setEntregasPendentes(prev => [...prev, {
+      cliente: cliente || 'Cliente',
+      endereco_destino: endDestino,
+      bairro_destino: bairroDestino,
+      cidade_destino: cidadeDestino || cidadeEstab,
+      km: resultado.km,
+      taxa: resultado.valor,
+      descricao_calculo: resultado.descricao,
+      kmManual: !kmVeioDeCalculoAutomatico
+    }])
+    limparFormulario()
+    setAdicionandoMais(true)
+  }
+
+  // Confirma e salva todas as entregas de uma vez
+  async function confirmarTodas() {
+    const todasEntregas = resultado
+      ? [...entregasPendentes, {
+          cliente: cliente || 'Cliente',
+          endereco_destino: endDestino,
+          bairro_destino: bairroDestino,
+          cidade_destino: cidadeDestino || cidadeEstab,
+          km: resultado.km,
+          taxa: resultado.valor,
+          descricao_calculo: resultado.descricao,
+          kmManual: !kmVeioDeCalculoAutomatico
+        }]
+      : entregasPendentes
+
+    if (todasEntregas.length === 0) return
+    setSalvando(true)
+
+    for (const e of todasEntregas) {
+      await salvarKmManualNoCache(e.km, e.endereco_destino, e.bairro_destino, e.cidade_destino)
+      await supabase.from('entregas').insert({
+        turno_id: turnoId, boy_id: userId, estab_id: estabelecimento.id,
+        cliente: e.cliente,
+        endereco_destino: e.endereco_destino,
+        bairro_destino: e.bairro_destino,
+        km: e.km, taxa: e.taxa,
+        descricao_calculo: e.descricao_calculo,
+        tipo_calculo: tipoCalculo,
+        status: 'pendente',
+        status_entrega: 'em_rota',
+        origem
+      })
     }
+
+    await rodarMatch(turnoId)
+    onConfirmado({ entregas: todasEntregas })
+    setSalvando(false)
   }
 
   async function confirmar() {
     if (!resultado) return
     setSalvando(true)
 
-    await salvarKmManualNoCache(resultado.km)
-
     if (editando) {
+      await salvarKmManualNoCache(resultado.km, endDestino, bairroDestino, cidadeDestino)
       const { error } = await supabase.from('entregas').update({
         cliente: cliente || 'Cliente',
         endereco_destino: endDestino,
@@ -237,22 +293,10 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
       }).eq('id', entregaExistente.id)
       if (error) { setErro('Erro ao salvar: ' + error.message); setSalvando(false); return }
       await rodarMatch(turnoId)
+      onConfirmado(resultado)
     } else {
-      const { error } = await supabase.from('entregas').insert({
-        turno_id: turnoId, boy_id: userId, estab_id: estabelecimento.id,
-        cliente: cliente || 'Cliente',
-        endereco_destino: endDestino,
-        bairro_destino: bairroDestino,
-        km: resultado.km, taxa: resultado.valor,
-        descricao_calculo: resultado.descricao,
-        tipo_calculo: tipoCalculo,
-        status: 'pendente', origem
-      })
-      if (error) { setErro('Erro ao salvar: ' + error.message); setSalvando(false); return }
-      await rodarMatch(turnoId)
+      await confirmarTodas()
     }
-
-    onConfirmado(resultado)
     setSalvando(false)
   }
 
@@ -264,11 +308,14 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
     setApagando(false)
   }
 
+  const totalPendentes = entregasPendentes.reduce((s, e) => s + e.taxa, 0) + (resultado?.valor || 0)
+  const qtdTotal = entregasPendentes.length + (resultado ? 1 : 0)
+
   return (
     <div style={{ padding: '0 1rem' }}>
       <div className="header" style={{ padding: '1rem 0 0.75rem' }}>
         <button className="back-btn" onClick={onVoltar}>←</button>
-        <h1>{editando ? 'Editar entrega' : 'Nova entrega'}</h1>
+        <h1>{editando ? 'Editar entrega' : adicionandoMais ? `Entrega #${entregasPendentes.length + 1}` : 'Nova entrega'}</h1>
       </div>
 
       <div style={{ fontSize: 12, color: 'var(--text-2)', padding: '0 0 12px', borderBottom: '1px solid var(--border)', marginBottom: 12 }}>
@@ -279,6 +326,26 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         {modeMedicao === 'bairro' && <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 11 }}>· bairro a bairro</span>}
         {origem === 'loja' && <span style={{ marginLeft: 6, color: 'var(--yellow)', fontSize: 11 }}>· lançando como loja</span>}
       </div>
+
+      {/* Lista de entregas já adicionadas */}
+      {entregasPendentes.length > 0 && (
+        <div className="card" style={{ marginBottom: 8 }}>
+          <h2>Na fila ({entregasPendentes.length})</h2>
+          {entregasPendentes.map((e, i) => (
+            <div key={i} className="row">
+              <div>
+                <div style={{ fontWeight: 500, fontSize: 13 }}>#{i + 1} {e.cliente}</div>
+                <div className="muted">{e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}</div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: 'var(--yellow)', fontWeight: 600 }}>R${e.taxa.toFixed(2)}</span>
+                <button style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: 16, padding: 4 }}
+                  onClick={() => setEntregasPendentes(prev => prev.filter((_, idx) => idx !== i))}>×</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="card">
         {!editando && (
@@ -371,7 +438,38 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
         )}
       </div>
 
-      {resultado && (
+      {resultado && !editando && (
+        <div className="card">
+          <h2>Resultado</h2>
+          <div className="grid2">
+            <div className="metric">
+              <div className="metric-val">{resultado.km > 0 ? resultado.km.toFixed(1) + ' km' : '—'}</div>
+              <div className="metric-lbl">Distância</div>
+            </div>
+            <div className="metric">
+              <div className="metric-val yellow">R${resultado.valor.toFixed(2)}</div>
+              <div className="metric-lbl">Taxa</div>
+            </div>
+          </div>
+          {resultado.descricao && <p className="muted" style={{ marginTop: 8 }}>{resultado.descricao}</p>}
+
+          {/* Botão adicionar outra entrega */}
+          <button className="btn btn-outline" onClick={adicionarEntregaNaLista} style={{ marginTop: 14 }}>
+            + Adicionar outra entrega
+          </button>
+
+          {/* Confirmar todas */}
+          <button className="btn btn-primary" onClick={confirmar} disabled={salvando} style={{ marginTop: 8 }}>
+            {salvando
+              ? <><span className="spinner"></span>Salvando...</>
+              : qtdTotal > 1
+                ? `Confirmar ${qtdTotal} entregas — R$${totalPendentes.toFixed(2)}`
+                : 'Confirmar entrega'}
+          </button>
+        </div>
+      )}
+
+      {resultado && editando && (
         <div className="card">
           <h2>Resultado</h2>
           <div className="grid2">
@@ -386,7 +484,7 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
           </div>
           {resultado.descricao && <p className="muted" style={{ marginTop: 8 }}>{resultado.descricao}</p>}
           <button className="btn btn-primary" onClick={confirmar} disabled={salvando} style={{ marginTop: 14 }}>
-            {salvando ? <><span className="spinner"></span>Salvando...</> : editando ? 'Salvar alterações' : 'Confirmar entrega'}
+            {salvando ? <><span className="spinner"></span>Salvando...</> : 'Salvar alterações'}
           </button>
         </div>
       )}
