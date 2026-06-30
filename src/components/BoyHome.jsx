@@ -31,13 +31,6 @@ function corCheck(status) {
   return 'var(--text-3)'
 }
 
-function labelCheck(status) {
-  if (status === 'verde') return '✓ Conferido'
-  if (status === 'amarelo') return '⚠ Divergência leve'
-  if (status === 'vermelho') return '✗ Divergência'
-  return '— Aguardando'
-}
-
 function montarPares(entregas) {
   const boys = entregas.filter(e => e.origem === 'boy')
   const lojas = entregas.filter(e => e.origem === 'loja')
@@ -56,6 +49,37 @@ function montarPares(entregas) {
   return pares
 }
 
+function abrirRotaMaps(entregas, estabAtivo) {
+  const pendentes = entregas.filter(e => e.origem === 'boy' && e.status_entrega !== 'concluida')
+  if (pendentes.length === 0) return
+
+  const origem = encodeURIComponent(
+    estabAtivo?.endereco_saida
+      ? `${estabAtivo.endereco_saida}, ${estabAtivo.cidade || 'São José dos Campos'}, SP`
+      : 'Minha localização'
+  )
+
+  if (pendentes.length === 1) {
+    const dest = encodeURIComponent(
+      pendentes[0].endereco_destino || pendentes[0].bairro_destino || ''
+    )
+    window.open(`https://www.google.com/maps/dir/?api=1&origin=${origem}&destination=${dest}&travelmode=driving`, '_blank')
+    return
+  }
+
+  // Múltiplos destinos — Google Maps otimiza automaticamente
+  const waypoints = pendentes.slice(0, -1).map(e =>
+    encodeURIComponent(e.endereco_destino || e.bairro_destino || '')
+  ).join('|')
+  const dest = encodeURIComponent(
+    pendentes[pendentes.length - 1].endereco_destino || pendentes[pendentes.length - 1].bairro_destino || ''
+  )
+  window.open(
+    `https://www.google.com/maps/dir/?api=1&origin=${origem}&destination=${dest}&waypoints=optimize:true|${waypoints}&travelmode=driving`,
+    '_blank'
+  )
+}
+
 export default function BoyHome({ perfil, onLogout }) {
   const [tela, setTela] = useState('home')
   const [meusEstabs, setMeusEstabs] = useState([])
@@ -71,6 +95,7 @@ export default function BoyHome({ perfil, onLogout }) {
   const [confirmandoApagarEstab, setConfirmandoApagarEstab] = useState(null)
   const [solicitandoFechamento, setSolicitandoFechamento] = useState(false)
   const [entregaEditando, setEntregaEditando] = useState(null)
+  const [marcandoConcluida, setMarcandoConcluida] = useState(null)
 
   useEffect(() => { carregarDados() }, [])
 
@@ -167,6 +192,13 @@ export default function BoyHome({ perfil, onLogout }) {
     setEntregas(data || [])
   }
 
+  async function marcarConcluida(entregaId) {
+    setMarcandoConcluida(entregaId)
+    await supabase.from('entregas').update({ status_entrega: 'concluida' }).eq('id', entregaId)
+    setEntregas(prev => prev.map(e => e.id === entregaId ? { ...e, status_entrega: 'concluida' } : e))
+    setMarcandoConcluida(null)
+  }
+
   async function abrirTurno() {
     if (!estabAtivo) return
     const hoje = new Date().toISOString().split('T')[0]
@@ -258,6 +290,8 @@ export default function BoyHome({ perfil, onLogout }) {
   }
 
   const entregasBoy = entregas.filter(e => e.origem === 'boy')
+  const entregasEmRota = entregasBoy.filter(e => e.status_entrega === 'em_rota')
+  const entregasConcluidas = entregasBoy.filter(e => e.status_entrega === 'concluida')
   const totalEntregas = entregasBoy.reduce((s, e) => s + e.taxa, 0)
   const taxaFixa = turnoAtivo?.taxa_fixa_turno || estabAtivo?.taxa_fixa_turno || 0
   const totalComFixa = totalEntregas + taxaFixa
@@ -265,6 +299,7 @@ export default function BoyHome({ perfil, onLogout }) {
   const vincAtivos = vinculos.filter(v => v.aceito_boy && v.aceito_loja)
   const turnoComDuploCheck = vincAtivos.length > 0 && turnoAtivo !== null
   const podeFechamento = turnoAtivo?.fechamento_boy
+  const temEntregasEmRota = entregasEmRota.length > 0
 
   if (tela === 'add-estab') return (
     <CadastroEstabelecimento
@@ -362,6 +397,40 @@ export default function BoyHome({ perfil, onLogout }) {
           </div>
         )}
 
+        {/* Banner de entregas em rota */}
+        {temEntregasEmRota && (
+          <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--yellow)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <h2 style={{ margin: 0 }}>🏍️ Em rota ({entregasEmRota.length})</h2>
+              <button className="btn btn-primary btn-sm" style={{ marginTop: 0, fontSize: 12 }}
+                onClick={() => abrirRotaMaps(entregas, estabAtivo)}>
+                Abrir no Maps
+              </button>
+            </div>
+            {entregasEmRota.map(e => (
+              <div key={e.id} className="row" style={{ alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: 13 }}>{e.cliente}</div>
+                  <div className="muted">{e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ color: 'var(--yellow)', fontWeight: 600 }}>R${e.taxa.toFixed(2)}</span>
+                  <button
+                    style={{
+                      background: 'var(--green)', border: 'none', borderRadius: 6,
+                      color: '#fff', fontWeight: 700, fontSize: 13, padding: '6px 12px', cursor: 'pointer',
+                      opacity: marcandoConcluida === e.id ? 0.6 : 1
+                    }}
+                    disabled={marcandoConcluida === e.id}
+                    onClick={() => marcarConcluida(e.id)}>
+                    {marcandoConcluida === e.id ? '...' : '✓'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="grid2">
           <div className="metric">
             <div className="metric-val yellow">R${totalEntregas.toFixed(2)}</div>
@@ -440,14 +509,6 @@ export default function BoyHome({ perfil, onLogout }) {
                       await carregarHistorico(); setTela('relatorio')
                     }}>Fechar turno</button>
                   )}
-                  <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 11, color: 'var(--text-3)' }}
-                    onClick={async () => {
-                      const { data } = await supabase
-                        .from('turnos').select('*').eq('id', turnoAtivo.id).single()
-                      alert('fechamento_boy: ' + data?.fechamento_boy + ' | fechamento_loja: ' + data?.fechamento_loja + ' | status: ' + data?.status)
-                    }}>
-                    Debug turno
-                  </button>
                 </>
               )}
               <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
@@ -527,10 +588,16 @@ export default function BoyHome({ perfil, onLogout }) {
             ) : (
               entregas.map(e => (
                 <div className="row" key={e.id}
-                  onClick={() => { if (e.origem === 'boy') { setEntregaEditando(e); setTela('editar-entrega') } }}
-                  style={{ cursor: e.origem === 'boy' ? 'pointer' : 'default' }}>
+                  onClick={() => { if (e.origem === 'boy' && e.status_entrega !== 'concluida') { setEntregaEditando(e); setTela('editar-entrega') } }}
+                  style={{
+                    cursor: e.origem === 'boy' && e.status_entrega !== 'concluida' ? 'pointer' : 'default',
+                    opacity: e.status_entrega === 'concluida' ? 0.5 : 1
+                  }}>
                   <div>
-                    <div style={{ fontWeight: 500, fontSize: 14 }}>{e.cliente}</div>
+                    <div style={{ fontWeight: 500, fontSize: 14 }}>
+                      {e.status_entrega === 'concluida' && <span style={{ color: 'var(--green)', marginRight: 4 }}>✓</span>}
+                      {e.cliente}
+                    </div>
                     <div className="muted">{e.km > 0 ? e.km.toFixed(1) + ' km' : e.bairro_destino}</div>
                   </div>
                   <div style={{ color: 'var(--yellow)', fontWeight: 600 }}>R${e.taxa.toFixed(2)}</div>
