@@ -74,12 +74,14 @@ function abrirRotaMaps(entregas, estabAtivo) {
     return
   }
 
-  const waypoints = pendentes.slice(0, -1)
-    .map(e => encodeURIComponent(montarEnderecoMaps(e)))
-    .join('|')
+  // Múltiplos destinos — sem optimize:true (não suportado na URL web)
+  // O Maps já organiza a rota na ordem passada
+  const todosDestinos = pendentes.map(e => encodeURIComponent(montarEnderecoMaps(e))).join('|')
   const dest = encodeURIComponent(montarEnderecoMaps(pendentes[pendentes.length - 1]))
+  const waypoints = pendentes.slice(0, -1).map(e => encodeURIComponent(montarEnderecoMaps(e))).join('|')
+
   window.open(
-    `https://www.google.com/maps/dir/?api=1&origin=${origem}&destination=${dest}&waypoints=optimize:true|${waypoints}&travelmode=driving`,
+    `https://www.google.com/maps/dir/?api=1&origin=${origem}&destination=${dest}&waypoints=${waypoints}&travelmode=driving`,
     '_blank'
   )
 }
