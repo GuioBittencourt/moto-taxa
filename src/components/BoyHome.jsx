@@ -53,27 +53,31 @@ function abrirRotaMaps(entregas, estabAtivo) {
   const pendentes = entregas.filter(e => e.origem === 'boy' && e.status_entrega !== 'concluida')
   if (pendentes.length === 0) return
 
+  const cidade = estabAtivo?.cidade || 'São José dos Campos'
+  const estado = 'SP'
+
+  function montarEnderecoMaps(e) {
+    const end = e.endereco_destino || e.bairro_destino || ''
+    if (end.toLowerCase().includes(cidade.toLowerCase())) return `${end}, ${estado}, Brasil`
+    return `${end}, ${cidade}, ${estado}, Brasil`
+  }
+
   const origem = encodeURIComponent(
     estabAtivo?.endereco_saida
-      ? `${estabAtivo.endereco_saida}, ${estabAtivo.cidade || 'São José dos Campos'}, SP`
+      ? `${estabAtivo.endereco_saida}, ${cidade}, ${estado}`
       : 'Minha localização'
   )
 
   if (pendentes.length === 1) {
-    const dest = encodeURIComponent(
-      pendentes[0].endereco_destino || pendentes[0].bairro_destino || ''
-    )
+    const dest = encodeURIComponent(montarEnderecoMaps(pendentes[0]))
     window.open(`https://www.google.com/maps/dir/?api=1&origin=${origem}&destination=${dest}&travelmode=driving`, '_blank')
     return
   }
 
-  // Múltiplos destinos — Google Maps otimiza automaticamente
-  const waypoints = pendentes.slice(0, -1).map(e =>
-    encodeURIComponent(e.endereco_destino || e.bairro_destino || '')
-  ).join('|')
-  const dest = encodeURIComponent(
-    pendentes[pendentes.length - 1].endereco_destino || pendentes[pendentes.length - 1].bairro_destino || ''
-  )
+  const waypoints = pendentes.slice(0, -1)
+    .map(e => encodeURIComponent(montarEnderecoMaps(e)))
+    .join('|')
+  const dest = encodeURIComponent(montarEnderecoMaps(pendentes[pendentes.length - 1]))
   window.open(
     `https://www.google.com/maps/dir/?api=1&origin=${origem}&destination=${dest}&waypoints=optimize:true|${waypoints}&travelmode=driving`,
     '_blank'
@@ -291,7 +295,6 @@ export default function BoyHome({ perfil, onLogout }) {
 
   const entregasBoy = entregas.filter(e => e.origem === 'boy')
   const entregasEmRota = entregasBoy.filter(e => e.status_entrega === 'em_rota')
-  const entregasConcluidas = entregasBoy.filter(e => e.status_entrega === 'concluida')
   const totalEntregas = entregasBoy.reduce((s, e) => s + e.taxa, 0)
   const taxaFixa = turnoAtivo?.taxa_fixa_turno || estabAtivo?.taxa_fixa_turno || 0
   const totalComFixa = totalEntregas + taxaFixa
@@ -397,7 +400,6 @@ export default function BoyHome({ perfil, onLogout }) {
           </div>
         )}
 
-        {/* Banner de entregas em rota */}
         {temEntregasEmRota && (
           <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--yellow)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -509,21 +511,39 @@ export default function BoyHome({ perfil, onLogout }) {
                       await carregarHistorico(); setTela('relatorio')
                     }}>Fechar turno</button>
                   )}
+                  <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
+                    onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
+                    + Outro estabelecimento
+                  </button>
+                  <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
+                    onClick={() => setTela('gerenciar-estabs')}>
+                    Gerenciar estabelecimentos ({meusEstabs.length})
+                  </button>
+                  {vincAtivos.length > 0 && (
+                    <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
+                      onClick={() => setTela('vinculos')}>
+                      Vínculos ativos ({vincAtivos.length})
+                    </button>
+                  )}
                 </>
               )}
-              <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
-                onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
-                + Outro estabelecimento
-              </button>
-              <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
-                onClick={() => setTela('gerenciar-estabs')}>
-                Gerenciar estabelecimentos ({meusEstabs.length})
-              </button>
-              {vincAtivos.length > 0 && (
-                <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
-                  onClick={() => setTela('vinculos')}>
-                  Vínculos ativos ({vincAtivos.length})
-                </button>
+              {!turnoAtivo && (
+                <>
+                  <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
+                    onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
+                    + Outro estabelecimento
+                  </button>
+                  <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
+                    onClick={() => setTela('gerenciar-estabs')}>
+                    Gerenciar estabelecimentos ({meusEstabs.length})
+                  </button>
+                  {vincAtivos.length > 0 && (
+                    <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
+                      onClick={() => setTela('vinculos')}>
+                      Vínculos ativos ({vincAtivos.length})
+                    </button>
+                  )}
+                </>
               )}
             </>
           )}
@@ -588,9 +608,9 @@ export default function BoyHome({ perfil, onLogout }) {
             ) : (
               entregas.map(e => (
                 <div className="row" key={e.id}
-                  onClick={() => { if (e.origem === 'boy' && e.status_entrega !== 'concluida') { setEntregaEditando(e); setTela('editar-entrega') } }}
+                  onClick={() => { if (e.origem === 'boy') { setEntregaEditando(e); setTela('editar-entrega') } }}
                   style={{
-                    cursor: e.origem === 'boy' && e.status_entrega !== 'concluida' ? 'pointer' : 'default',
+                    cursor: e.origem === 'boy' ? 'pointer' : 'default',
                     opacity: e.status_entrega === 'concluida' ? 0.5 : 1
                   }}>
                   <div>
