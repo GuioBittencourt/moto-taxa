@@ -13,6 +13,7 @@ export default function App() {
   const [perfil, setPerfil] = useState(null)
   const [loading, setLoading] = useState(true)
   const [erroAuth, setErroAuth] = useState('')
+  const [mostraAdmin, setMostraAdmin] = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -24,7 +25,7 @@ export default function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
       if (session) carregarPerfil(session.user.id)
-      else { setPerfil(null); setLoading(false) }
+      else { setPerfil(null); setLoading(false); setMostraAdmin(false) }
     })
 
     return () => subscription.unsubscribe()
@@ -33,28 +34,11 @@ export default function App() {
   async function carregarPerfil(userId) {
     try {
       const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single()
-
-      if (error) {
-        console.error('Erro perfil:', error.message, error.code)
-        setErroAuth('Erro ao carregar perfil: ' + error.message)
-        setLoading(false)
-        return
-      }
-
-      if (!data) {
-        console.error('Perfil não encontrado para userId:', userId)
-        setErroAuth('Perfil não encontrado. Tente criar a conta novamente.')
-        setLoading(false)
-        return
-      }
-
+        .from('profiles').select('*').eq('id', userId).single()
+      if (error) { setErroAuth('Erro ao carregar perfil: ' + error.message); setLoading(false); return }
+      if (!data) { setErroAuth('Perfil não encontrado.'); setLoading(false); return }
       setPerfil(data)
     } catch (e) {
-      console.error('Erro inesperado:', e)
       setErroAuth('Erro inesperado: ' + e.message)
     }
     setLoading(false)
@@ -62,8 +46,7 @@ export default function App() {
 
   async function handleLogout() {
     await supabase.auth.signOut()
-    setPerfil(null)
-    setErroAuth('')
+    setPerfil(null); setErroAuth(''); setMostraAdmin(false)
   }
 
   if (loading) return (
@@ -79,17 +62,24 @@ export default function App() {
     </div>
   )
 
-  if (!session || !perfil) return (
-    <LoginScreen onLogin={(p) => setPerfil(p)} />
-  )
+  if (!session || !perfil) return <LoginScreen onLogin={(p) => setPerfil(p)} />
 
-  if (session.user.email === ADMIN_EMAIL) return (
-    <AdminHome perfil={perfil} onLogout={handleLogout} />
+  const isAdmin = session.user.email === ADMIN_EMAIL
+
+  if (isAdmin && mostraAdmin) return (
+    <AdminHome perfil={perfil} onLogout={handleLogout} onVoltar={() => setMostraAdmin(false)} />
   )
 
   if (perfil.tipo === 'estabelecimento') return (
     <LojaHome perfil={perfil} onLogout={handleLogout} />
   )
 
-  return <BoyHome perfil={perfil} onLogout={handleLogout} />
+  return (
+    <BoyHome
+      perfil={perfil}
+      onLogout={handleLogout}
+      isAdmin={isAdmin}
+      onAbrirAdmin={() => setMostraAdmin(true)}
+    />
+  )
 }
