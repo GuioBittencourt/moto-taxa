@@ -4,6 +4,9 @@ import { supabase } from '../lib/supabase'
 import LoginScreen from '../components/LoginScreen'
 import BoyHome from '../components/BoyHome'
 import LojaHome from '../components/LojaHome'
+import AdminHome from '../components/AdminHome'
+
+const ADMIN_EMAIL = 'guilherme_fvb@hotmail.com'
 
 export default function App() {
   const [session, setSession] = useState(null)
@@ -78,6 +81,10 @@ export default function App() {
 
   if (!session || !perfil) return (
     <LoginScreen onLogin={(p) => setPerfil(p)} />
+  )
+
+  if (session.user.email === ADMIN_EMAIL) return (
+    <AdminHome perfil={perfil} onLogout={handleLogout} />
   )
 
   if (perfil.tipo === 'estabelecimento') return (
