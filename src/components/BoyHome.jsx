@@ -74,19 +74,17 @@ function abrirRotaMaps(entregas, estabAtivo) {
     return
   }
 
-  // Múltiplos destinos — sem optimize:true (não suportado na URL web)
-  // O Maps já organiza a rota na ordem passada
-  const todosDestinos = pendentes.map(e => encodeURIComponent(montarEnderecoMaps(e))).join('|')
+  const waypoints = pendentes.slice(0, -1)
+    .map(e => encodeURIComponent(montarEnderecoMaps(e)))
+    .join('|')
   const dest = encodeURIComponent(montarEnderecoMaps(pendentes[pendentes.length - 1]))
-  const waypoints = pendentes.slice(0, -1).map(e => encodeURIComponent(montarEnderecoMaps(e))).join('|')
-
   window.open(
     `https://www.google.com/maps/dir/?api=1&origin=${origem}&destination=${dest}&waypoints=${waypoints}&travelmode=driving`,
     '_blank'
   )
 }
 
-export default function BoyHome({ perfil, onLogout }) {
+export default function BoyHome({ perfil, onLogout, isAdmin, onAbrirAdmin }) {
   const [tela, setTela] = useState('home')
   const [meusEstabs, setMeusEstabs] = useState([])
   const [estabAtivo, setEstabAtivo] = useState(null)
@@ -476,15 +474,7 @@ export default function BoyHome({ perfil, onLogout }) {
                 </div>
               )}
 
-              {!turnoAtivo ? (
-                <>
-                  <button className="btn btn-primary" onClick={abrirTurno} style={{ marginTop: 12 }}>Iniciar turno</button>
-                  {historicoTurnos.length > 0 && (
-                    <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
-                      onClick={() => setTela('historico')}>Ver histórico de turnos</button>
-                  )}
-                </>
-              ) : (
+              {turnoAtivo ? (
                 <>
                   <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 8 }}>
                     Iniciado em {formatarData(turnoAtivo.inicio)} às {formatarHora(turnoAtivo.inicio)}
@@ -527,10 +517,21 @@ export default function BoyHome({ perfil, onLogout }) {
                       Vínculos ativos ({vincAtivos.length})
                     </button>
                   )}
+                  {isAdmin && (
+                    <button className="btn btn-outline"
+                      style={{ marginTop: 8, fontSize: 12, color: 'var(--yellow)', borderColor: 'var(--yellow)' }}
+                      onClick={onAbrirAdmin}>
+                      ⚙ Painel ADM
+                    </button>
+                  )}
                 </>
-              )}
-              {!turnoAtivo && (
+              ) : (
                 <>
+                  <button className="btn btn-primary" onClick={abrirTurno} style={{ marginTop: 12 }}>Iniciar turno</button>
+                  {historicoTurnos.length > 0 && (
+                    <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
+                      onClick={() => setTela('historico')}>Ver histórico de turnos</button>
+                  )}
                   <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
                     onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
                     + Outro estabelecimento
@@ -543,6 +544,13 @@ export default function BoyHome({ perfil, onLogout }) {
                     <button className="btn btn-outline" style={{ marginTop: 4, fontSize: 12 }}
                       onClick={() => setTela('vinculos')}>
                       Vínculos ativos ({vincAtivos.length})
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <button className="btn btn-outline"
+                      style={{ marginTop: 8, fontSize: 12, color: 'var(--yellow)', borderColor: 'var(--yellow)' }}
+                      onClick={onAbrirAdmin}>
+                      ⚙ Painel ADM
                     </button>
                   )}
                 </>
