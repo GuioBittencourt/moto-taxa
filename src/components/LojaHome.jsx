@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import CadastroEstabelecimento from './CadastroEstabelecimento'
 import NovaEntrega from './NovaEntrega'
 import { rodarMatch } from '../lib/match'
+import OnboardingModal, { useOnboarding } from './OnboardingModal'
 
 function normalizar(str) {
   return (str || '').toLowerCase().trim()
@@ -63,11 +64,13 @@ export default function LojaHome({ perfil, onLogout }) {
   const [gerandoLink, setGerandoLink] = useState(false)
   const [loading, setLoading] = useState(true)
   const [fechando, setFechando] = useState(false)
+  const [fechandoId, setFechandoId] = useState(null)
   const [entregaEditando, setEntregaEditando] = useState(null)
   const [abrindoTurno, setAbrindoTurno] = useState(false)
   const [nomeTurno, setNomeTurno] = useState('')
   const [turnoRelatorio, setTurnoRelatorio] = useState(null)
   const [entregasRelatorio, setEntregasRelatorio] = useState([])
+  const onboarding = useOnboarding(perfil.id)
 
   useEffect(() => { carregarDados() }, [])
 
@@ -132,7 +135,6 @@ export default function LojaHome({ perfil, onLogout }) {
   }
 
   async function carregarTurnos(estabId) {
-    // Turnos próprios da loja (boy_id = perfil da loja, via nome_turno)
     const { data: turnosLoja } = await supabase
       .from('turnos').select('*')
       .eq('estab_id', estabId)
@@ -140,7 +142,6 @@ export default function LojaHome({ perfil, onLogout }) {
       .eq('status', 'aberto')
       .order('created_at', { ascending: false })
 
-    // Turnos de boys vinculados
     const { data: vincs } = await supabase
       .from('vinculos').select('boy_id')
       .eq('estab_id', estabId).eq('ativo', true)
@@ -207,48 +208,53 @@ export default function LojaHome({ perfil, onLogout }) {
     if (data) { setTurnoAtivo(data); await carregarEntregas(data.id); setTela('turno') }
   }
 
-  async function fecharTurno() {
-    if (!turnoAtivo) return
+  async function fecharTurno(turnoParam) {
+    const turno = turnoParam || turnoAtivo
+    if (!turno) return
     setFechando(true)
-    const isTurnoLoja = turnoAtivo.boy_id === perfil.id
+    setFechandoId(turno.id)
+    const isLoja = turno.boy_id === perfil.id
 
-    if (isTurnoLoja) {
-      // Turno próprio da loja — fecha direto
+    if (isLoja) {
       await supabase.from('turnos').update({
         status: 'fechado', fim: new Date().toISOString()
-      }).eq('id', turnoAtivo.id)
-      const { data: ents } = await supabase.from('entregas').select('*').eq('turno_id', turnoAtivo.id)
-      setTurnoRelatorio(turnoAtivo)
+      }).eq('id', turno.id)
+      const { data: ents } = await supabase.from('entregas').select('*').eq('turno_id', turno.id)
+      setTurnoRelatorio(turno)
       setEntregasRelatorio(ents || [])
       await carregarTurnos(estabAtivo.id)
       await carregarHistorico(estabAtivo.id)
       setFechando(false)
+      setFechandoId(null)
       setTela('relatorio')
       return
     }
 
-    // Turno de boy vinculado — duplo check
-    const { data: ents } = await supabase.from('entregas').select('*').eq('turno_id', turnoAtivo.id)
+    const { data: ents } = await supabase.from('entregas').select('*').eq('turno_id', turno.id)
     const temVermelho = (ents || []).some(e => e.status_check === 'vermelho')
     if (temVermelho) {
       alert('Ainda há divergências em vermelho. Corrija antes de fechar.')
       setFechando(false)
+      setFechandoId(null)
       return
     }
 
-    await supabase.from('turnos').update({ fechamento_loja: true }).eq('id', turnoAtivo.id)
+    await supabase.from('turnos').update({ fechamento_loja: true }).eq('id', turno.id)
     const { data: turnoAtualizado } = await supabase
-      .from('turnos').select('*').eq('id', turnoAtivo.id).single()
-    if (turnoAtualizado) setTurnoAtivo(prev => ({ ...prev, ...turnoAtualizado }))
+      .from('turnos').select('*').eq('id', turno.id).single()
+    if (turnoAtualizado && turnoAtivo?.id === turno.id) {
+      setTurnoAtivo(prev => ({ ...prev, ...turnoAtualizado }))
+    }
 
     if (turnoAtualizado?.fechamento_boy) {
       await supabase.from('turnos').update({
         status: 'fechado', fim: new Date().toISOString()
-      }).eq('id', turnoAtivo.id)
-      await carregarTurnos(estabAtivo.id)
+      }).eq('id', turno.id)
       await carregarHistorico(estabAtivo.id)
     }
+    await carregarTurnos(estabAtivo.id)
     setFechando(false)
+    setFechandoId(null)
   }
 
   async function gerarLinkConvite() {
@@ -319,6 +325,8 @@ export default function LojaHome({ perfil, onLogout }) {
     : entregasBoy.reduce((s, e) => s + e.taxa, 0)
   const temVermelho = entregas.some(e => e.status_check === 'vermelho')
   const turnoComDuploCheck = turnoAtivo && !isTurnoLoja(turnoAtivo)
+  const hojeStr = new Date().toDateString()
+  const turnosAntigos = turnos.filter(t => new Date(t.inicio).toDateString() !== hojeStr)
 
   if (tela === 'add-estab') return (
     <CadastroEstabelecimento
@@ -429,7 +437,7 @@ export default function LojaHome({ perfil, onLogout }) {
           </button>
 
           {isTurnoLoja(turnoAtivo) ? (
-            <button className="btn btn-outline" onClick={fecharTurno} disabled={fechando} style={{ marginTop: 4 }}>
+            <button className="btn btn-outline" onClick={() => fecharTurno()} disabled={fechando} style={{ marginTop: 4 }}>
               {fechando ? <><span className="spinner"></span>Fechando...</> : 'Fechar turno'}
             </button>
           ) : (
@@ -438,7 +446,7 @@ export default function LojaHome({ perfil, onLogout }) {
                 Aguardando confirmação do motoboy para fechar.
               </div>
             ) : (
-              <button className="btn btn-outline" onClick={fecharTurno}
+              <button className="btn btn-outline" onClick={() => fecharTurno()}
                 disabled={fechando || temVermelho} style={{ marginTop: 4 }}>
                 {fechando ? <><span className="spinner"></span>Verificando...</> :
                   temVermelho ? 'Divergências pendentes' : 'Solicitar fechamento'}
@@ -534,6 +542,27 @@ export default function LojaHome({ perfil, onLogout }) {
   // Tela HOME
   return (
     <div>
+      {onboarding.mostrar && (
+        <OnboardingModal tipo="estabelecimento" userId={perfil.id} onFechar={onboarding.fechar} />
+      )}
+
+      <button
+        onClick={onboarding.abrir}
+        style={{
+          position: 'fixed', bottom: 20, left: 16, zIndex: 999,
+          display: 'flex', alignItems: 'center', gap: 6,
+          background: 'var(--yellow)', color: '#111', border: 'none', borderRadius: 10,
+          padding: '10px 14px', fontWeight: 700, fontSize: 13,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)', cursor: 'pointer'
+        }}
+      >
+        <span style={{
+          width: 20, height: 20, borderRadius: '50%', background: 'rgba(0,0,0,0.2)', color: '#111',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700
+        }}>?</span>
+        Comece aqui
+      </button>
+
       <div style={{ position: 'relative', width: '100%', height: 110, overflow: 'hidden', background: '#000' }}>
         <img src="/logo-horizontal.png" alt="MotoTaxa"
           style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', opacity: 0.92 }} />
@@ -553,6 +582,27 @@ export default function LojaHome({ perfil, onLogout }) {
 
       <div style={{ padding: '0 1rem' }}>
         <div style={{ height: 12 }} />
+
+        {turnosAntigos.length > 0 && (
+          <div className="alert alert-warn" style={{ marginBottom: 12 }}>
+            <strong>
+              ⚠️ {turnosAntigos.length === 1 ? '1 turno aberto de dia anterior' : `${turnosAntigos.length} turnos abertos de dias anteriores`}
+            </strong>
+            {turnosAntigos.map(t => (
+              <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                <div style={{ fontSize: 13 }}>
+                  {nomeTurnoDisplay(t)} — desde {formatarData(t.inicio)} às {formatarHora(t.inicio)}
+                </div>
+                <button className="btn btn-sm"
+                  style={{ marginTop: 0, background: 'var(--yellow)', color: '#111', fontSize: 12, padding: '6px 10px', flexShrink: 0 }}
+                  onClick={() => fecharTurno(t)}
+                  disabled={fechando}>
+                  {fechandoId === t.id ? <span className="spinner"></span> : 'Fechar agora'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {vincPendentes.length > 0 && (
           <div className="alert alert-info" style={{ marginBottom: 12, cursor: 'pointer' }}

@@ -64,6 +64,7 @@ export default function AdminHome({ perfil, onLogout, onVoltar }) {
         ...e,
         nomeProfile: profile?.nome || e.nome,
         emailProfile: profile?.email || '',
+        whatsappProfile: profile?.whatsapp || '',
         totalTurnos: turnosEstab.length,
         turnosFechados: turnosEstab.filter(t => t.status === 'fechado').length,
         totalEntregas: entregasEstab.length,
@@ -285,7 +286,9 @@ function ListaEmpresas({ empresas, onSelecionar }) {
             <div>
               <div style={{ fontWeight: 600, fontSize: 14 }}>{e.nome}</div>
               <div className="muted">{e.cidade} · {e.endereco_saida}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>{e.emailProfile}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+                {e.emailProfile} {e.whatsappProfile && `· 📱 ${e.whatsappProfile}`}
+              </div>
             </div>
             <div style={{
               fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20,
@@ -322,7 +325,7 @@ function ListaBoys({ boys, onSelecionar }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div>
               <div style={{ fontWeight: 600, fontSize: 14 }}>{b.nome}</div>
-              <div className="muted">{b.email}</div>
+              <div className="muted">{b.email} {b.whatsapp && `· 📱 ${b.whatsapp}`}</div>
               {b.estabsVinculados.length > 0 && (
                 <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
                   Vínculos: {b.estabsVinculados.join(', ')}
@@ -376,6 +379,7 @@ function DetalheEmpresa({ empresa, turnos, entregas, boys, onVoltar, formatarDat
         <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 12 }}>
           {empresa.cidade} · {empresa.endereco_saida}<br />
           <span style={{ color: 'var(--text-3)' }}>{empresa.emailProfile}</span><br />
+          {empresa.whatsappProfile && <><span style={{ color: 'var(--text-3)' }}>📱 {empresa.whatsappProfile}</span><br /></>}
           <span style={{ color: 'var(--text-3)' }}>Cadastro: {formatarData(empresa.created_at)}</span>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -454,7 +458,7 @@ function DetalheBoy({ boy, turnos, entregas, onVoltar, formatarData, formatarHor
       </div>
       <div className="card">
         <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 12 }}>
-          {boy.email}<br />
+          {boy.email} {boy.whatsapp && <>· 📱 {boy.whatsapp}</>}<br />
           {boy.estabsVinculados?.length > 0 && (
             <span style={{ color: 'var(--text-3)' }}>Vínculos: {boy.estabsVinculados.join(', ')}</span>
           )}

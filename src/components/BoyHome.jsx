@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { rodarMatch } from '../lib/match'
 import CadastroEstabelecimento from './CadastroEstabelecimento'
 import NovaEntrega from './NovaEntrega'
+import OnboardingModal, { useOnboarding } from './OnboardingModal'
 
 function normalizar(str) {
   return (str || '').toLowerCase().trim()
@@ -100,6 +101,7 @@ export default function BoyHome({ perfil, onLogout, isAdmin, onAbrirAdmin }) {
   const [solicitandoFechamento, setSolicitandoFechamento] = useState(false)
   const [entregaEditando, setEntregaEditando] = useState(null)
   const [marcandoConcluida, setMarcandoConcluida] = useState(null)
+  const onboarding = useOnboarding(perfil.id)
 
   useEffect(() => { carregarDados() }, [])
 
@@ -372,6 +374,25 @@ export default function BoyHome({ perfil, onLogout, isAdmin, onAbrirAdmin }) {
 
   return (
     <div>
+      {onboarding.mostrar && (
+        <OnboardingModal tipo="boy" userId={perfil.id} onFechar={onboarding.fechar} />
+      )}
+      <button
+        onClick={onboarding.abrir}
+        style={{
+          position: 'fixed', bottom: 20, left: 16, zIndex: 999,
+          display: 'flex', alignItems: 'center', gap: 6,
+          background: 'var(--yellow)', color: '#111', border: 'none', borderRadius: 10,
+          padding: '10px 14px', fontWeight: 700, fontSize: 13,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)', cursor: 'pointer'
+        }}
+      >
+        <span style={{
+  width: 20, height: 20, borderRadius: '50%', background: 'rgba(0,0,0,0.2)', color: '#111',
+  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700
+}}>?</span>
+        Comece aqui
+      </button>
       <div style={{ position: 'relative', width: '100%', height: 110, overflow: 'hidden', background: '#000' }}>
         <img src="/logo-horizontal.png" alt="MotoTaxa"
           style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', opacity: 0.92 }} />
@@ -384,8 +405,10 @@ export default function BoyHome({ perfil, onLogout, isAdmin, onAbrirAdmin }) {
             <span className="badge badge-boy">Motoboy</span>
             <div style={{ color: '#fff', fontWeight: 600, fontSize: 15, marginTop: 2 }}>{perfil.nome}</div>
           </div>
-          <button className="btn btn-sm btn-outline" onClick={onLogout}
-            style={{ marginTop: 0, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}>Sair</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+  <button className="btn btn-sm btn-outline" onClick={onLogout}
+  style={{ marginTop: 0, color: '#fff', borderColor: 'rgba(255,255,255,0.4)' }}>Sair</button>
+</div>
         </div>
       </div>
 
