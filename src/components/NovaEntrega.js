@@ -364,7 +364,7 @@ export default function NovaEntrega({ userId, estabelecimento, turnoId, onConfir
               {lendoFoto ? <><span className="spinner"></span>IA lendo a comanda...</> : 'Tirar foto ou selecionar imagem'}
             </div>
             <input type="file" id="foto-input" accept="image/*,image/heic,image/heif"
-  style={{ display: 'none' }} onChange={e => e.target.files[0] && lerFoto(e.target.files[0])} />
+  style={{ display: 'none' }} onChange={e => e.target.files[0] && lerFoto(e.target.files[0])} /> 
             {fotoPreview && <img src={fotoPreview} style={{ width: '100%', borderRadius: 8, marginTop: 10, maxHeight: 180, objectFit: 'cover' }} />}
           </>
         )}

@@ -16,6 +16,7 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
   const [bairroSaida, setBairroSaida] = useState(estabExistente?.bairro_saida || '')
   const [cidade, setCidade] = useState(estabExistente?.cidade || '')
   const [taxaFixaTurno, setTaxaFixaTurno] = useState(estabExistente?.taxa_fixa_turno || '')
+  const [raioMaxKm, setRaioMaxKm] = useState(estabExistente?.regras?.raio_max_km || 30)
   const [tipoCalculo, setTipoCalculo] = useState(estabExistente?.tipo_calculo || 'km')
   const [modeMedicao, setModeMedicao] = useState(estabExistente?.regras?.mode_medicao || 'rua')
   const [taxaMinima, setTaxaMinima] = useState(estabExistente?.regras?.taxa_minima || '')
@@ -71,19 +72,20 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
 
   function montarRegras() {
     const taxa_minima = parseFloat(taxaMinima) || 0
-    if (tipoCalculo === 'composta' && regrasIA) return { ...regrasIA, taxa_minima, mode_medicao: modeMedicao }
+    const raio_max_km = parseFloat(raioMaxKm) || 30
+    if (tipoCalculo === 'composta' && regrasIA) return { ...regrasIA, taxa_minima, mode_medicao: modeMedicao, raio_max_km }
     if (tipoCalculo === 'fixa') return {
       tipo: 'fixa', taxa_fixa_entrega: parseFloat(taxaFixaEntrega) || 0,
-      taxa_minima, mode_medicao: modeMedicao, faixas_km: [], bairros: [], excedente_km: null
+      taxa_minima, mode_medicao: modeMedicao, faixas_km: [], bairros: [], excedente_km: null, raio_max_km
     }
     if (tipoCalculo === 'bairro') return {
       tipo: 'bairro', taxa_fixa_entrega: 0, taxa_minima, mode_medicao: 'bairro',
       faixas_km: [], bairros: bairros.filter(b => b.nome && b.valor).map(b => ({ nome: b.nome, valor: parseFloat(b.valor) })),
-      excedente_km: null
+      excedente_km: null, raio_max_km
     }
     return {
       tipo: 'km', taxa_fixa_entrega: 0, taxa_minima, mode_medicao: modeMedicao,
-      faixas_km: faixas, bairros: [], excedente_km: null
+      faixas_km: faixas, bairros: [], excedente_km: null, raio_max_km
     }
   }
 
@@ -158,6 +160,12 @@ export default function CadastroEstabelecimento({ userId, onSalvo, onVoltar, est
         <label>Taxa fixa de turno — R$ (opcional)</label>
         <input type="number" placeholder="Ex: 60.00" step="0.01" value={taxaFixaTurno}
           onChange={e => setTaxaFixaTurno(e.target.value)} />
+        <label>Raio máximo de entrega — km</label>
+        <input type="number" placeholder="Ex: 30" step="1" min="1" value={raioMaxKm}
+          onChange={e => setRaioMaxKm(e.target.value)} />
+        <p className="muted-sm" style={{ marginTop: 4 }}>
+          Distâncias calculadas acima desse limite são tratadas como erro de geocodificação e pedem o km manual. Padrão: 30km.
+        </p>
       </div>
 
       <div className="card">

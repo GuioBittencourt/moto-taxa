@@ -58,7 +58,15 @@ export async function POST(request) {
 
     console.log('DESTINO_RAW', JSON.stringify({ origem, destino, estabId, modeMedicao, rua, bairro, cidade }))
 
-    const LIMITE_KM_PLAUSIVEL = 30
+    // Raio máximo configurável por estabelecimento — cai para 30km se não configurado
+    let LIMITE_KM_PLAUSIVEL = 30
+    if (estabId) {
+      const { data: estabConfig } = await supabase
+        .from('estabelecimentos').select('regras').eq('id', estabId).maybeSingle()
+      if (estabConfig?.regras?.raio_max_km) {
+        LIMITE_KM_PLAUSIVEL = estabConfig.regras.raio_max_km
+      }
+    }
 
     function limparEndereco(end) {
       return end.replace(/\s*-\s*[^,]+/g, '').trim()
@@ -163,7 +171,7 @@ export async function POST(request) {
 
     if (resultado.ok) {
       if (resultado.km > LIMITE_KM_PLAUSIVEL) {
-        console.log('REJEITADO_KM_ABSURDO', JSON.stringify({ km: resultado.km, destinoGeocodificado: coordDestino.nome }))
+        console.log('REJEITADO_KM_ABSURDO', JSON.stringify({ km: resultado.km, limite: LIMITE_KM_PLAUSIVEL, destinoGeocodificado: coordDestino.nome }))
         return Response.json({
           ok: false,
           error: `Distância calculada (${resultado.km} km) parece incorreta. Informe o km manualmente.`
