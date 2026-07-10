@@ -12,9 +12,38 @@ function formatarHora(ts) {
   return new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
 }
 
+function linkWhatsApp(numero, mensagem) {
+  const digitos = (numero || '').replace(/\D/g, '')
+  if (!digitos) return null
+  const comCodigoPais = digitos.startsWith('55') ? digitos : `55${digitos}`
+  const textoCodificado = mensagem ? `?text=${encodeURIComponent(mensagem)}` : ''
+  return `https://wa.me/${comCodigoPais}${textoCodificado}`
+}
+
+function IconeContato() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="#25D366" style={{ display: 'inline-block', verticalAlign: -2, marginRight: 3 }}>
+      <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" />
+    </svg>
+  )
+}
+
+function WhatsAppLink({ numero, mensagem }) {
+  const textoPadrao = 'Olá! Aqui é da equipe MotoTaxa 🏍️ Tudo bem?'
+  const link = linkWhatsApp(numero, mensagem || textoPadrao)
+  if (!link) return null
+  return (
+    <a href={link} target="_blank" rel="noopener noreferrer"
+      onClick={e => e.stopPropagation()}
+      style={{ color: 'var(--yellow)', textDecoration: 'none' }}>
+      <IconeContato />{numero}
+    </a>
+  )
+}
+
 function MetricCard({ label, value, sub, cor }) {
   return (
-    <div style={{ background: 'var(--bg-2)', borderRadius: 10, padding: '12px 14px', flex: 1, minWidth: 0 }}>
+    <div style={{ background: 'var(--bg-2)', borderRadius: 10, padding: '12px 14px', minWidth: 0 }}>
       <div style={{ fontSize: 22, fontWeight: 700, color: cor || 'var(--yellow)' }}>{value}</div>
       <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 2 }}>{label}</div>
       {sub && <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 2 }}>{sub}</div>}
@@ -231,7 +260,7 @@ function Dashboard({ dados }) {
       </div>
 
       <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: 8 }}>Financeiro acumulado</div>
+        <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: 8 }}>Financeiro acumulado (fluxo entre empresas e boys)</div>
         <div style={{ display: 'flex', gap: 8 }}>
           <MetricCard label="Total taxas pagas" value={`R$${dados.taxaTotalGeral.toFixed(2)}`} />
           <MetricCard label="Total km rodados" value={`${dados.kmTotalGeral} km`} cor="var(--text-1)" />
@@ -275,11 +304,58 @@ function Dashboard({ dados }) {
 }
 
 function ListaEmpresas({ empresas, onSelecionar }) {
+  const [busca, setBusca] = useState('')
+  const [filtroStatus, setFiltroStatus] = useState('todos')
+  const [ordenacao, setOrdenacao] = useState('recente')
+
+  const empresasFiltradas = empresas
+    .filter(e => e.nome.toLowerCase().includes(busca.toLowerCase()))
+    .filter(e => {
+      if (filtroStatus === 'ativos') return e.ativo
+      if (filtroStatus === 'inativos') return !e.ativo
+      return true
+    })
+    .sort((a, b) => {
+      if (ordenacao === 'nome_az') return a.nome.localeCompare(b.nome)
+      if (ordenacao === 'nome_za') return b.nome.localeCompare(a.nome)
+      if (ordenacao === 'recente') return new Date(b.created_at) - new Date(a.created_at)
+      if (ordenacao === 'antigo') return new Date(a.created_at) - new Date(b.created_at)
+      if (ordenacao === 'receita') return b.taxaTotal - a.taxaTotal
+      if (ordenacao === 'entregas') return b.totalEntregas - a.totalEntregas
+      return 0
+    })
+
   return (
     <div>
-      <h2 style={{ marginBottom: 12 }}>Empresas ({empresas.length})</h2>
-      {empresas.length === 0 && <p className="muted">Nenhuma empresa cadastrada.</p>}
-      {empresas.map(e => (
+      <h2 style={{ marginBottom: 12 }}>
+        Empresas ({empresasFiltradas.length}{empresasFiltradas.length !== empresas.length ? ` de ${empresas.length}` : ''})
+      </h2>
+
+      <div style={{ marginBottom: 14 }}>
+        <input
+          placeholder="Buscar por nome..."
+          value={busca}
+          onChange={e => setBusca(e.target.value)}
+        />
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} style={{ flex: 1 }}>
+            <option value="todos">Todos os status</option>
+            <option value="ativos">Só ativos</option>
+            <option value="inativos">Só inativos</option>
+          </select>
+          <select value={ordenacao} onChange={e => setOrdenacao(e.target.value)} style={{ flex: 1 }}>
+            <option value="recente">Cadastro: mais recente</option>
+            <option value="antigo">Cadastro: mais antigo</option>
+            <option value="nome_az">Nome: A-Z</option>
+            <option value="nome_za">Nome: Z-A</option>
+            <option value="receita">Mais receita</option>
+            <option value="entregas">Mais entregas</option>
+          </select>
+        </div>
+      </div>
+
+      {empresasFiltradas.length === 0 && <p className="muted">Nenhuma empresa encontrada.</p>}
+      {empresasFiltradas.map(e => (
         <div key={e.id} className="card" style={{ marginBottom: 8, cursor: 'pointer' }}
           onClick={() => onSelecionar(e)}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -287,7 +363,7 @@ function ListaEmpresas({ empresas, onSelecionar }) {
               <div style={{ fontWeight: 600, fontSize: 14 }}>{e.nome}</div>
               <div className="muted">{e.cidade} · {e.endereco_saida}</div>
               <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
-                {e.emailProfile} {e.whatsappProfile && `· 📱 ${e.whatsappProfile}`}
+                {e.emailProfile} {e.whatsappProfile && <>· <WhatsAppLink numero={e.whatsappProfile} /></>}
               </div>
             </div>
             <div style={{
@@ -315,17 +391,64 @@ function ListaEmpresas({ empresas, onSelecionar }) {
 }
 
 function ListaBoys({ boys, onSelecionar }) {
+  const [busca, setBusca] = useState('')
+  const [filtroStatus, setFiltroStatus] = useState('todos')
+  const [ordenacao, setOrdenacao] = useState('recente')
+
+  const boysFiltrados = boys
+    .filter(b => b.nome.toLowerCase().includes(busca.toLowerCase()))
+    .filter(b => {
+      if (filtroStatus === 'ativos') return b.ativo
+      if (filtroStatus === 'inativos') return !b.ativo
+      return true
+    })
+    .sort((a, b) => {
+      if (ordenacao === 'nome_az') return a.nome.localeCompare(b.nome)
+      if (ordenacao === 'nome_za') return b.nome.localeCompare(a.nome)
+      if (ordenacao === 'recente') return new Date(b.created_at) - new Date(a.created_at)
+      if (ordenacao === 'antigo') return new Date(a.created_at) - new Date(b.created_at)
+      if (ordenacao === 'receita') return b.taxaTotal - a.taxaTotal
+      if (ordenacao === 'entregas') return b.totalEntregas - a.totalEntregas
+      return 0
+    })
+
   return (
     <div>
-      <h2 style={{ marginBottom: 12 }}>Motoboys ({boys.length})</h2>
-      {boys.length === 0 && <p className="muted">Nenhum motoboy cadastrado.</p>}
-      {boys.map(b => (
+      <h2 style={{ marginBottom: 12 }}>
+        Motoboys ({boysFiltrados.length}{boysFiltrados.length !== boys.length ? ` de ${boys.length}` : ''})
+      </h2>
+
+      <div style={{ marginBottom: 14 }}>
+        <input
+          placeholder="Buscar por nome..."
+          value={busca}
+          onChange={e => setBusca(e.target.value)}
+        />
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} style={{ flex: 1 }}>
+            <option value="todos">Todos os status</option>
+            <option value="ativos">Só ativos</option>
+            <option value="inativos">Só inativos</option>
+          </select>
+          <select value={ordenacao} onChange={e => setOrdenacao(e.target.value)} style={{ flex: 1 }}>
+            <option value="recente">Cadastro: mais recente</option>
+            <option value="antigo">Cadastro: mais antigo</option>
+            <option value="nome_az">Nome: A-Z</option>
+            <option value="nome_za">Nome: Z-A</option>
+            <option value="receita">Mais recebido</option>
+            <option value="entregas">Mais entregas</option>
+          </select>
+        </div>
+      </div>
+
+      {boysFiltrados.length === 0 && <p className="muted">Nenhum motoboy encontrado.</p>}
+      {boysFiltrados.map(b => (
         <div key={b.id} className="card" style={{ marginBottom: 8, cursor: 'pointer' }}
           onClick={() => onSelecionar(b)}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div>
               <div style={{ fontWeight: 600, fontSize: 14 }}>{b.nome}</div>
-              <div className="muted">{b.email} {b.whatsapp && `· 📱 ${b.whatsapp}`}</div>
+              <div className="muted">{b.email} {b.whatsapp && <>· <WhatsAppLink numero={b.whatsapp} /></>}</div>
               {b.estabsVinculados.length > 0 && (
                 <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
                   Vínculos: {b.estabsVinculados.join(', ')}
@@ -379,10 +502,10 @@ function DetalheEmpresa({ empresa, turnos, entregas, boys, onVoltar, formatarDat
         <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 12 }}>
           {empresa.cidade} · {empresa.endereco_saida}<br />
           <span style={{ color: 'var(--text-3)' }}>{empresa.emailProfile}</span><br />
-          {empresa.whatsappProfile && <><span style={{ color: 'var(--text-3)' }}>📱 {empresa.whatsappProfile}</span><br /></>}
+          {empresa.whatsappProfile && <><WhatsAppLink numero={empresa.whatsappProfile} /><br /></>}
           <span style={{ color: 'var(--text-3)' }}>Cadastro: {formatarData(empresa.created_at)}</span>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
           <MetricCard label="Total entregas" value={empresa.totalEntregas} />
           <MetricCard label="Total km" value={`${empresa.kmTotal} km`} cor="var(--text-1)" />
           <MetricCard label="Taxas pagas" value={`R$${empresa.taxaTotal.toFixed(2)}`} />
@@ -458,12 +581,12 @@ function DetalheBoy({ boy, turnos, entregas, onVoltar, formatarData, formatarHor
       </div>
       <div className="card">
         <div style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 12 }}>
-          {boy.email} {boy.whatsapp && <>· 📱 {boy.whatsapp}</>}<br />
+          {boy.email} {boy.whatsapp && <>· <WhatsAppLink numero={boy.whatsapp} /></>}<br />
           {boy.estabsVinculados?.length > 0 && (
             <span style={{ color: 'var(--text-3)' }}>Vínculos: {boy.estabsVinculados.join(', ')}</span>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
           <MetricCard label="Total entregas" value={boy.totalEntregas} />
           <MetricCard label="Total km" value={`${boy.kmTotal} km`} cor="var(--text-1)" />
           <MetricCard label="Total recebido" value={`R$${boy.taxaTotal.toFixed(2)}`} />
