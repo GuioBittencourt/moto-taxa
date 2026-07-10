@@ -51,6 +51,63 @@ function MetricCard({ label, value, sub, cor }) {
   )
 }
 
+// --- Helpers de marcos de relacionamento ---
+
+function verificarAniversario(dataCadastro, hoje) {
+  const cadastro = new Date(dataCadastro)
+  const diffDias = Math.floor((hoje - cadastro) / (1000 * 60 * 60 * 24))
+
+  if (diffDias === 7) return '1 semana de MotoTaxa'
+
+  const marcosMeses = [
+    { meses: 3, label: '3 meses de MotoTaxa' },
+    { meses: 6, label: '6 meses de MotoTaxa' },
+    { meses: 12, label: '1 ano de MotoTaxa' },
+  ]
+  for (const m of marcosMeses) {
+    const alvo = new Date(cadastro)
+    alvo.setMonth(alvo.getMonth() + m.meses)
+    if (alvo.toDateString() === hoje.toDateString()) return m.label
+  }
+
+  for (let anos = 2; anos <= 10; anos++) {
+    const alvo = new Date(cadastro)
+    alvo.setFullYear(alvo.getFullYear() + anos)
+    if (alvo.toDateString() === hoje.toDateString()) return `${anos} anos de MotoTaxa`
+  }
+
+  return null
+}
+
+function verificarRecordeDiario(listaEntregas, hoje) {
+  const porDia = {}
+  listaEntregas.forEach(e => {
+    const dia = new Date(e.created_at).toDateString()
+    porDia[dia] = (porDia[dia] || 0) + 1
+  })
+  const hojeStr = hoje.toDateString()
+  const contagemHoje = porDia[hojeStr] || 0
+  if (contagemHoje === 0) return null
+
+  const diasAnteriores = Object.entries(porDia).filter(([dia]) => dia !== hojeStr)
+  if (diasAnteriores.length === 0) return null
+
+  const recordeAnterior = Math.max(...diasAnteriores.map(([, qtd]) => qtd))
+  if (contagemHoje > recordeAnterior) return contagemHoje
+  return null
+}
+
+function verificarMarcoVolume(listaEntregas, hoje) {
+  const marcos = [50, 100, 250, 500, 1000, 2000, 5000]
+  const hojeStr = hoje.toDateString()
+  const totalAntes = listaEntregas.filter(e => new Date(e.created_at).toDateString() !== hojeStr).length
+  const totalDepois = listaEntregas.length
+  for (const marco of marcos) {
+    if (totalAntes < marco && totalDepois >= marco) return marco
+  }
+  return null
+}
+
 export default function AdminHome({ perfil, onLogout, onVoltar }) {
   const [aba, setAba] = useState('dashboard')
   const [dados, setDados] = useState(null)
@@ -62,6 +119,10 @@ export default function AdminHome({ perfil, onLogout, onVoltar }) {
 
   async function carregarTudo() {
     setLoading(true)
+    const hoje = new Date()
+    const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1)
+    const inicioSemana = new Date(hoje)
+    inicioSemana.setDate(hoje.getDate() - hoje.getDay())
 
     const { data: estabs } = await supabase
       .from('estabelecimentos').select('*')
@@ -89,6 +150,27 @@ export default function AdminHome({ perfil, onLogout, onVoltar }) {
       const taxaTotal = entregasEstab.reduce((s, ent) => s + (ent.taxa || 0), 0)
       const profile = (profiles || []).find(p => p.id === e.criado_por)
 
+      const turnosOrdenados = [...turnosEstab].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      const ultimaAtividade = turnosOrdenados[0]?.created_at || e.created_at
+      const diasSemAtividade = Math.floor((hoje - new Date(ultimaAtividade)) / (1000 * 60 * 60 * 24))
+
+      const aniversario = verificarAniversario(e.created_at, hoje)
+      const recordeHoje = verificarRecordeDiario(entregasEstab, hoje)
+      const marcoVolume = verificarMarcoVolume(entregasEstab, hoje)
+      const eventosHoje = []
+      if (aniversario) eventosHoje.push({
+        texto: `🎂 ${aniversario}`,
+        mensagem: `Parabéns! Hoje a ${e.nome} completa ${aniversario.toLowerCase()}! 🎉 Muito obrigado por fazer parte da nossa jornada com o MotoTaxa.`
+      })
+      if (recordeHoje) eventosHoje.push({
+        texto: `🚀 Recorde: ${recordeHoje} entregas em um dia`,
+        mensagem: `Parabéns! Hoje a ${e.nome} bateu um recorde pessoal: ${recordeHoje} entregas em um único dia! 🚀 Continue assim!`
+      })
+      if (marcoVolume) eventosHoje.push({
+        texto: `🏆 ${marcoVolume}ª entrega alcançada`,
+        mensagem: `Parabéns! A ${e.nome} acabou de bater a marca de ${marcoVolume} entregas pelo MotoTaxa! 🎉 Obrigado pela confiança.`
+      })
+
       return {
         ...e,
         nomeProfile: profile?.nome || e.nome,
@@ -100,7 +182,9 @@ export default function AdminHome({ perfil, onLogout, onVoltar }) {
         kmTotal: +kmTotal.toFixed(1),
         taxaTotal: +taxaTotal.toFixed(2),
         boysVinculados: boysVinculados.length,
-        ativo: turnosEstab.some(t => t.status === 'aberto')
+        ativo: turnosEstab.some(t => t.status === 'aberto'),
+        diasSemAtividade,
+        eventosHoje
       }
     })
 
@@ -115,6 +199,23 @@ export default function AdminHome({ perfil, onLogout, onVoltar }) {
         return estab?.nome || ''
       }).filter(Boolean)
 
+      const aniversario = verificarAniversario(b.created_at, hoje)
+      const recordeHoje = verificarRecordeDiario(entregasBoy, hoje)
+      const marcoVolume = verificarMarcoVolume(entregasBoy, hoje)
+      const eventosHoje = []
+      if (aniversario) eventosHoje.push({
+        texto: `🎂 ${aniversario}`,
+        mensagem: `Parabéns, ${b.nome}! Hoje você completa ${aniversario.toLowerCase()}! 🎉 Muito obrigado por fazer parte da nossa jornada com o MotoTaxa.`
+      })
+      if (recordeHoje) eventosHoje.push({
+        texto: `🚀 Recorde: ${recordeHoje} entregas em um dia`,
+        mensagem: `Parabéns, ${b.nome}! Hoje você bateu seu recorde pessoal: ${recordeHoje} entregas em um único dia! 🚀 Continue assim!`
+      })
+      if (marcoVolume) eventosHoje.push({
+        texto: `🏆 ${marcoVolume}ª entrega alcançada`,
+        mensagem: `Parabéns, ${b.nome}! Você acabou de bater a marca de ${marcoVolume} entregas pelo MotoTaxa! 🎉 Obrigado pela parceria.`
+      })
+
       return {
         ...b,
         totalTurnos: turnosBoy.length,
@@ -122,14 +223,10 @@ export default function AdminHome({ perfil, onLogout, onVoltar }) {
         kmTotal: +kmTotal.toFixed(1),
         taxaTotal: +taxaTotal.toFixed(2),
         estabsVinculados,
-        ativo: turnosBoy.some(t => t.status === 'aberto')
+        ativo: turnosBoy.some(t => t.status === 'aberto'),
+        eventosHoje
       }
     })
-
-    const hoje = new Date()
-    const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1)
-    const inicioSemana = new Date(hoje)
-    inicioSemana.setDate(hoje.getDate() - hoje.getDay())
 
     const entregasHoje = (entregas || []).filter(e => new Date(e.created_at).toDateString() === hoje.toDateString())
     const entregasMes = (entregas || []).filter(e => new Date(e.created_at) >= inicioMes)
@@ -142,9 +239,39 @@ export default function AdminHome({ perfil, onLogout, onVoltar }) {
     })
     const topRegioes = Object.entries(regioes).sort((a, b) => b[1] - a[1]).slice(0, 5)
 
+    const empresasInativas = empresasComDados
+      .filter(e => !e.ativo && e.diasSemAtividade >= 3)
+      .sort((a, b) => b.diasSemAtividade - a.diasSemAtividade)
+
+    const empresasComEventos = empresasComDados.filter(e => e.eventosHoje.length > 0)
+    const boysComEventos = boysComDados.filter(b => b.eventosHoje.length > 0)
+
+    const destaqueEmpresaMes = empresasComDados
+      .map(e => ({
+        nome: e.nome,
+        whatsapp: e.whatsappProfile,
+        receitaMes: entregasMes.filter(ent => ent.estab_id === e.id).reduce((s, ent) => s + (ent.taxa || 0), 0)
+      }))
+      .filter(e => e.receitaMes > 0)
+      .sort((a, b) => b.receitaMes - a.receitaMes)[0] || null
+
+    const destaqueBoyMes = boysComDados
+      .map(b => ({
+        nome: b.nome,
+        whatsapp: b.whatsapp,
+        entregasMes: entregasMes.filter(ent => ent.boy_id === b.id && ent.origem === 'boy').length
+      }))
+      .filter(b => b.entregasMes > 0)
+      .sort((a, b) => b.entregasMes - a.entregasMes)[0] || null
+
     setDados({
       empresas: empresasComDados,
       boys: boysComDados,
+      empresasInativas,
+      empresasComEventos,
+      boysComEventos,
+      destaqueEmpresaMes,
+      destaqueBoyMes,
       totalEmpresas: empresasComDados.length,
       empresasAtivas: empresasComDados.filter(e => e.ativo).length,
       totalBoys: boys.length,
@@ -229,8 +356,99 @@ export default function AdminHome({ perfil, onLogout, onVoltar }) {
 }
 
 function Dashboard({ dados }) {
+  const temEventosHoje = dados.empresasComEventos.length > 0 || dados.boysComEventos.length > 0
+  const temDestaques = dados.destaqueEmpresaMes || dados.destaqueBoyMes
+
   return (
     <div>
+      {dados.empresasInativas.length > 0 && (
+        <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid #ef4444' }}>
+          <h2>⚠️ {dados.empresasInativas.length} empresa{dados.empresasInativas.length > 1 ? 's' : ''} sem atividade (3+ dias)</h2>
+          {dados.empresasInativas.map(e => (
+            <div key={e.id} className="row">
+              <div>
+                <div style={{ fontWeight: 500, fontSize: 14 }}>{e.nome}</div>
+                <div className="muted-sm">{e.diasSemAtividade} dias sem turno</div>
+              </div>
+              {e.whatsappProfile && (
+                <WhatsAppLink
+                  numero={e.whatsappProfile}
+                  mensagem={`Olá! Aqui é da equipe MotoTaxa 🏍️ Notei que a ${e.nome} não abriu nenhum turno recentemente. Precisa de alguma ajuda ou está tudo bem por aí?`}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(temEventosHoje || temDestaques) && (
+        <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid var(--yellow)' }}>
+          <h2>🎉 Relacionamento e Conquistas</h2>
+
+          {temEventosHoje && (
+            <>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase', marginTop: 8, marginBottom: 6 }}>
+                Hoje é dia de comemorar
+              </div>
+              {dados.empresasComEventos.map(e => (
+                e.eventosHoje.map((evento, i) => (
+                  <div key={`emp-${e.id}-${i}`} className="row">
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: 13 }}>{e.nome}</div>
+                      <div className="muted-sm">{evento.texto}</div>
+                    </div>
+                    {e.whatsappProfile && <WhatsAppLink numero={e.whatsappProfile} mensagem={evento.mensagem} />}
+                  </div>
+                ))
+              ))}
+              {dados.boysComEventos.map(b => (
+                b.eventosHoje.map((evento, i) => (
+                  <div key={`boy-${b.id}-${i}`} className="row">
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: 13 }}>{b.nome} <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(motoboy)</span></div>
+                      <div className="muted-sm">{evento.texto}</div>
+                    </div>
+                    {b.whatsapp && <WhatsAppLink numero={b.whatsapp} mensagem={evento.mensagem} />}
+                  </div>
+                ))
+              ))}
+            </>
+          )}
+
+          {temDestaques && (
+            <>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase', marginTop: 14, marginBottom: 6 }}>
+                Destaques do mês
+              </div>
+              {dados.destaqueEmpresaMes && (
+                <div className="row">
+                  <div>
+                    <div style={{ fontWeight: 500, fontSize: 13 }}>🏆 {dados.destaqueEmpresaMes.nome}</div>
+                    <div className="muted-sm">Empresa com mais movimento este mês — R${dados.destaqueEmpresaMes.receitaMes.toFixed(2)}</div>
+                  </div>
+                  {dados.destaqueEmpresaMes.whatsapp && (
+                    <WhatsAppLink numero={dados.destaqueEmpresaMes.whatsapp}
+                      mensagem={`Parabéns! A ${dados.destaqueEmpresaMes.nome} foi a empresa com mais movimento no MotoTaxa este mês! 🏆 Obrigado por confiar na gente.`} />
+                  )}
+                </div>
+              )}
+              {dados.destaqueBoyMes && (
+                <div className="row">
+                  <div>
+                    <div style={{ fontWeight: 500, fontSize: 13 }}>🏆 {dados.destaqueBoyMes.nome}</div>
+                    <div className="muted-sm">Motoboy com mais entregas este mês — {dados.destaqueBoyMes.entregasMes} entregas</div>
+                  </div>
+                  {dados.destaqueBoyMes.whatsapp && (
+                    <WhatsAppLink numero={dados.destaqueBoyMes.whatsapp}
+                      mensagem={`Parabéns, ${dados.destaqueBoyMes.nome}! Você foi o motoboy com mais entregas no MotoTaxa este mês! 🏆 Continue com esse ritmo!`} />
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       <h2 style={{ marginBottom: 12 }}>Visão geral</h2>
 
       <div style={{ marginBottom: 16 }}>
