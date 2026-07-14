@@ -470,13 +470,19 @@ export default function BoyHome({ perfil, onLogout, isAdmin, onAbrirAdmin }) {
         <div className="card">
           <h2>Turno</h2>
           {meusEstabs.length === 0 ? (
-            <>
-              <p className="muted" style={{ marginBottom: 12 }}>Nenhum estabelecimento cadastrado.</p>
-              <button className="btn btn-primary" onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
-                + Cadastrar estabelecimento
-              </button>
-            </>
-          ) : (
+  <>
+    <p className="muted" style={{ marginBottom: 12 }}>Nenhum estabelecimento cadastrado.</p>
+    <button className="btn btn-primary" onClick={() => { setEstabEditando(null); setTela('add-estab') }}>
+      + Cadastrar estabelecimento
+    </button>
+    {historicoTurnos.length > 0 && (
+      <button className="btn btn-outline" style={{ marginTop: 8, fontSize: 12 }}
+        onClick={() => setTela('historico')}>
+        Ver histórico de turnos
+      </button>
+    )}
+  </>
+) : (
             <>
               <label>Estabelecimento</label>
               <select value={estabAtivo?.id || ''}
