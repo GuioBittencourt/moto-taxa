@@ -481,6 +481,13 @@ export default function BoyHome({ perfil, onLogout, isAdmin, onAbrirAdmin }) {
         Ver histórico de turnos
       </button>
     )}
+    {isAdmin && (
+      <button className="btn btn-outline"
+        style={{ marginTop: 8, fontSize: 12, color: 'var(--yellow)', borderColor: 'var(--yellow)' }}
+        onClick={onAbrirAdmin}>
+        ⚙ Painel ADM
+      </button>
+    )}
   </>
 ) : (
             <>
